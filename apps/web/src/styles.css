@@ -274,6 +274,15 @@ button:disabled {
 .kpi-card__meta,
 .event-item,
 .search-card p {
+  color: var(--ink-soft);
+}
+
+.panel--dark .muted,
+.panel--dark .chart-subtitle,
+.panel--dark .legend,
+.panel--dark .kpi-card__meta,
+.panel--dark .event-item,
+.panel--dark .search-card p {
   color: var(--sidebar-muted);
 }
 

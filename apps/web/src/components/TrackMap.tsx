@@ -67,18 +67,13 @@ export function TrackMap(props: {
   const refHover = props.hoverDistance !== null
     ? getHoverPoint(trackPoints, props.hoverDistance)
     : null;
-    
-  const targetPoints = props.comparison.targetLap.points.filter((p) => p.x !== null && p.y !== null);
-  const targetHover = props.hoverDistance !== null && targetPoints.length > 0
-    ? getHoverPoint(targetPoints, props.hoverDistance)
-    : null;
 
   return (
     <article className="panel chart-card">
       <div className="chart-card__header">
         <div>
           <h3 className="chart-card__title">2D Track Map</h3>
-          <p className="chart-subtitle">GPS Trace of the reference lap</p>
+          <p className="chart-subtitle">Location on track (Distance synchronized)</p>
         </div>
       </div>
       <div className="chart-card__plot" style={{ height: `${height}px`, display: "flex", justifyContent: "center" }}>
@@ -104,21 +99,10 @@ export function TrackMap(props: {
             <circle
               cx={mapX(refHover.x)}
               cy={mapY(refHover.y)}
-              r={6}
-              fill={props.comparison.referenceLap.driver.color}
-              stroke="white"
-              strokeWidth={2}
-            />
-          ) : null}
-          
-          {targetHover && targetHover.x !== null && targetHover.y !== null ? (
-            <circle
-              cx={mapX(targetHover.x)}
-              cy={mapY(targetHover.y)}
-              r={6}
-              fill={props.comparison.targetLap.driver.color}
-              stroke="white"
-              strokeWidth={2}
+              r={7}
+              fill="white"
+              stroke="rgba(20,20,20,0.8)"
+              strokeWidth={3}
             />
           ) : null}
         </svg>

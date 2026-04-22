@@ -42,6 +42,9 @@ export interface DriverLapSummary {
   telemetryStatus: string;
   telemetrySampleCount: number;
   isPitLap: boolean;
+  stint?: number | null;
+  tyreCompound?: string | null;
+  tyreAge?: number | null;
 }
 
 export interface DriverSessionResult {
@@ -72,11 +75,21 @@ export interface DriverPitStopSummary {
   pitDuration: number | null;
 }
 
+export interface DriverStintSummary {
+  id: number;
+  stintNumber: number;
+  lapStart: number;
+  lapEnd: number;
+  compound: string | null;
+  tyreAgeAtStart: number | null;
+}
+
 export interface DriverSessionSummary extends DriverSummary {
   headshotUrl: string | null;
   result: DriverSessionResult;
   stats: DriverSessionStats;
   pitStops: DriverPitStopSummary[];
+  stints: DriverStintSummary[];
   laps: DriverLapSummary[];
 }
 

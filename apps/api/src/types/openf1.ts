@@ -79,13 +79,13 @@ export interface OpenF1SessionResult {
   gap_to_leader: number | string | Array<number | string | null> | null;
 }
 
-export interface OpenF1PitStop {
-  date: string;
+export interface OpenF1Stint {
   session_key: number;
   meeting_key: number;
+  stint_number: number;
   driver_number: number;
-  lap_number: number | null;
-  lane_duration: number | null;
-  stop_duration: number | null;
-  pit_duration: number | null;
+  lap_start: number;
+  lap_end: number;
+  compound: string | null;
+  tyre_age_at_start: number | null;
 }

@@ -29,6 +29,7 @@ model Session {
   comparisonCaches ComparisonCache[]
   sessionResults   SessionResult[]
   pitStops         PitStop[]
+  stints           Stint[]
 }
 
 model Driver {
@@ -52,6 +53,7 @@ model Driver {
   telemetryPoints TelemetryPoint[]
   sessionResult SessionResult?
   pitStops      PitStop[]
+  stints        Stint[]
 
   @@unique([sessionId, driverNumber])
   @@index([sessionId, acronym])
@@ -73,6 +75,9 @@ model Lap {
   speedI1           Int?
   speedI2           Int?
   isPitOutLap       Boolean           @default(false)
+  stint             Int?
+  tyreCompound      String?
+  tyreAge           Int?
   telemetryImportedAt DateTime?
   telemetryStatus   String            @default("pending")
   telemetryMessage  String?
@@ -174,4 +179,24 @@ model PitStop {
 
   @@unique([sessionId, driverId, date])
   @@index([sessionId, driverId, lapNumber])
+}
+
+model Stint {
+  id               Int      @id @default(autoincrement())
+  sessionId        Int
+  driverId         Int
+  sessionKey       Int
+  driverNumber     Int
+  stintNumber      Int
+  lapStart         Int
+  lapEnd           Int
+  compound         String?
+  tyreAgeAtStart   Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  session          Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  driver           Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, driverId, stintNumber])
+  @@index([sessionId, driverId])
 }

@@ -5,7 +5,8 @@ import type {
   OpenF1LocationPoint,
   OpenF1PitStop,
   OpenF1Session,
-  OpenF1SessionResult
+  OpenF1SessionResult,
+  OpenF1Stint
 } from "../types/openf1.js";
 
 const OPEN_F1_BASE_URL = "https://api.openf1.org/v1";
@@ -143,5 +144,11 @@ export function getOpenF1Location(params: {
     driver_number: params.driverNumber,
     "date>=": params.dateFrom,
     "date<": params.dateTo
+  });
+}
+
+export function getOpenF1Stints(sessionKey: number) {
+  return fetchOpenF1<OpenF1Stint[]>("stints", {
+    session_key: sessionKey
   });
 }

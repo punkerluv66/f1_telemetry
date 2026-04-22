@@ -25,7 +25,14 @@ export function DriverSummaryCard(props: {
       <div className="driver-stat-grid">
         <div className="driver-stat">
           <span>Best lap</span>
-          <strong>{formatLapTime(props.driver.stats.bestLapSeconds)}</strong>
+          <strong>
+            {formatLapTime(props.driver.stats.bestLapSeconds)}
+            {props.driver.stats.bestLapSeconds ? 
+              (() => {
+                const bestLapObj = props.driver.laps.find(l => l.lapDuration === props.driver.stats.bestLapSeconds);
+                return bestLapObj ? ` (L${bestLapObj.lapNumber})` : "";
+              })() : ""}
+          </strong>
         </div>
         <div className="driver-stat">
           <span>Average lap</span>
@@ -68,6 +75,22 @@ export function DriverSummaryCard(props: {
             {props.driver.stats.telemetryCachedLaps}
           </p>
         </div>
+      </div>
+
+      <div className="driver-card__pit-block">
+        <p className="driver-card__detail-label">Tire Strategy</p>
+        {props.driver.stints && props.driver.stints.length > 0 ? (
+          <div className="strategy-list">
+            {props.driver.stints.map((stint, idx) => (
+              <span key={stint.id}>
+                {stint.compound ?? "UNKNOWN"} ({stint.lapEnd - stint.lapStart + 1} laps)
+                {idx < props.driver.stints.length - 1 ? " ➔ " : ""}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="driver-card__pit-empty">No strategy data available.</p>
+        )}
       </div>
 
       <div className="driver-card__pit-block">

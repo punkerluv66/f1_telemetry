@@ -159,8 +159,10 @@ export async function compareLaps(params: {
     })
   ]);
 
+  const rawReferenceLength = referenceLap.telemetryPoints[referenceLap.telemetryPoints.length - 1]?.distanceM ?? 0;
+
   const normalizedReference = normalizeTelemetry(referenceLap.telemetryPoints);
-  const normalizedTarget = normalizeTelemetry(targetLap.telemetryPoints);
+  const normalizedTarget = normalizeTelemetry(targetLap.telemetryPoints, rawReferenceLength);
   const commonDistance = Math.min(
     normalizedReference[normalizedReference.length - 1]?.distanceM ?? 0,
     normalizedTarget[normalizedTarget.length - 1]?.distanceM ?? 0
@@ -264,9 +266,16 @@ function buildTelemetryPoints(input: {
   for (const [index, sample] of sortedCarData.entries()) {
     const timestampMs = new Date(sample.date).getTime();
 
-    if (previousCarTimestamp !== null) {
+    if (previousCarTimestamp === null) {
+      const initialOffsetMs = timestampMs - lapStartMs;
+      if (initialOffsetMs > 0) {
+        integratedDistance = (sample.speed / 3.6) * (initialOffsetMs / 1000);
+      }
+    } else {
       const deltaSeconds = (timestampMs - previousCarTimestamp) / 1000;
-      integratedDistance += Math.max(0, (sortedCarData[index - 1].speed / 3.6) * deltaSeconds);
+      const prevSpeed = sortedCarData[index - 1].speed;
+      const avgSpeed = (prevSpeed + sample.speed) / 2;
+      integratedDistance += Math.max(0, (avgSpeed / 3.6) * deltaSeconds);
     }
 
     previousCarTimestamp = timestampMs;
@@ -274,7 +283,7 @@ function buildTelemetryPoints(input: {
     const locationState = interpolateLocationState(locationTimeline, timestampMs);
     const distanceM = Math.max(
       previousComputedDistance,
-      locationState?.distanceM ?? integratedDistance
+      integratedDistance
     );
     previousComputedDistance = distanceM;
 

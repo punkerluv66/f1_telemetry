@@ -7,7 +7,8 @@ import {
   getOpenF1Laps,
   getOpenF1PitStops,
   getOpenF1SessionByKey,
-  getOpenF1SessionResults
+  getOpenF1SessionResults,
+  getOpenF1Stints
 } from "../lib/openf1.js";
 
 export async function importSessionMetadata(sessionKey: number) {
@@ -17,11 +18,12 @@ export async function importSessionMetadata(sessionKey: number) {
     throw new Error(`OpenF1 session ${sessionKey} was not found.`);
   }
 
-  const [remoteDrivers, remoteLaps, remoteResults, remotePitStops] = await Promise.all([
+  const [remoteDrivers, remoteLaps, remoteResults, remotePitStops, remoteStints] = await Promise.all([
     getOpenF1Drivers(sessionKey),
     getOpenF1Laps(sessionKey),
     getOpenF1SessionResults(sessionKey),
-    getOpenF1PitStops(sessionKey)
+    getOpenF1PitStops(sessionKey),
+    getOpenF1Stints(sessionKey)
   ]);
 
   const session = await prisma.session.upsert({
@@ -108,6 +110,16 @@ export async function importSessionMetadata(sessionKey: number) {
       continue;
     }
 
+    const lapStint = remoteStints.find(
+      (s) =>
+        s.driver_number === remoteLap.driver_number &&
+        remoteLap.lap_number >= s.lap_start &&
+        remoteLap.lap_number <= s.lap_end
+    );
+    const tyreAge = lapStint
+      ? (lapStint.tyre_age_at_start ?? 0) + (remoteLap.lap_number - lapStint.lap_start)
+      : null;
+
     await prisma.lap.upsert({
       where: {
         sessionId_driverId_lapNumber: {
@@ -127,7 +139,10 @@ export async function importSessionMetadata(sessionKey: number) {
         speedTrap: remoteLap.st_speed,
         speedI1: remoteLap.i1_speed,
         speedI2: remoteLap.i2_speed,
-        isPitOutLap: remoteLap.is_pit_out_lap
+        isPitOutLap: remoteLap.is_pit_out_lap,
+        stint: lapStint?.stint_number ?? null,
+        tyreCompound: lapStint?.compound ?? null,
+        tyreAge
       },
       create: {
         sessionId: session.id,
@@ -143,7 +158,10 @@ export async function importSessionMetadata(sessionKey: number) {
         speedTrap: remoteLap.st_speed,
         speedI1: remoteLap.i1_speed,
         speedI2: remoteLap.i2_speed,
-        isPitOutLap: remoteLap.is_pit_out_lap
+        isPitOutLap: remoteLap.is_pit_out_lap,
+        stint: lapStint?.stint_number ?? null,
+        tyreCompound: lapStint?.compound ?? null,
+        tyreAge
       }
     });
   }
@@ -159,7 +177,8 @@ export async function importSessionMetadata(sessionKey: number) {
     sessionKey: session.sessionKey,
     driverByNumber,
     remoteResults,
-    remotePitStops
+    remotePitStops,
+    remoteStints
   });
 
   return {
@@ -224,9 +243,10 @@ export async function getSessionOverview(sessionId: number) {
       ])
     );
 
-    const [remoteResults, remotePitStops] = await Promise.all([
+    const [remoteResults, remotePitStops, remoteStints] = await Promise.all([
       shouldBackfillResults ? getOpenF1SessionResults(session.sessionKey) : Promise.resolve([]),
-      shouldBackfillPitStops ? getOpenF1PitStops(session.sessionKey) : Promise.resolve([])
+      shouldBackfillPitStops ? getOpenF1PitStops(session.sessionKey) : Promise.resolve([]),
+      getOpenF1Stints(session.sessionKey)
     ]);
 
     await refreshSessionDerivedData({
@@ -234,7 +254,8 @@ export async function getSessionOverview(sessionId: number) {
       sessionKey: session.sessionKey,
       driverByNumber,
       remoteResults,
-      remotePitStops
+      remotePitStops,
+      remoteStints
     });
 
     session = await loadSessionOverview(sessionId);
@@ -292,6 +313,14 @@ export async function getSessionOverview(sessionId: number) {
         stopDuration: pitStop.stopDuration,
         pitDuration: pitStop.pitDuration
       })),
+      stints: driver.stints.map((stint) => ({
+        id: stint.id,
+        stintNumber: stint.stintNumber,
+        lapStart: stint.lapStart,
+        lapEnd: stint.lapEnd,
+        compound: stint.compound,
+        tyreAgeAtStart: stint.tyreAgeAtStart
+      })),
       laps: driver.laps.map((lap) => ({
         id: lap.id,
         lapNumber: lap.lapNumber,
@@ -300,7 +329,10 @@ export async function getSessionOverview(sessionId: number) {
         telemetryImportedAt: lap.telemetryImportedAt,
         telemetryStatus: lap.telemetryStatus,
         telemetrySampleCount: lap._count.telemetryPoints,
-        isPitLap: pitLapNumbers.has(lap.lapNumber)
+        isPitLap: pitLapNumbers.has(lap.lapNumber),
+        stint: lap.stint,
+        tyreCompound: lap.tyreCompound,
+        tyreAge: lap.tyreAge
       }))
     };
   });
@@ -340,6 +372,11 @@ async function loadSessionOverview(sessionId: number) {
           pitStops: {
             orderBy: {
               date: "asc"
+            }
+          },
+          stints: {
+            orderBy: {
+              stintNumber: "asc"
             }
           },
           laps: {
@@ -398,6 +435,7 @@ async function refreshSessionDerivedData(input: {
   driverByNumber: Map<number, Driver>;
   remoteResults: Awaited<ReturnType<typeof getOpenF1SessionResults>>;
   remotePitStops: Awaited<ReturnType<typeof getOpenF1PitStops>>;
+  remoteStints: Awaited<ReturnType<typeof getOpenF1Stints>>;
 }) {
   const resultRows: Prisma.SessionResultCreateManyInput[] = [];
 
@@ -449,6 +487,28 @@ async function refreshSessionDerivedData(input: {
     });
   }
 
+  const stintRows: Prisma.StintCreateManyInput[] = [];
+
+  for (const stint of input.remoteStints) {
+    const driver = input.driverByNumber.get(stint.driver_number);
+
+    if (!driver) {
+      continue;
+    }
+
+    stintRows.push({
+      sessionId: input.sessionId,
+      driverId: driver.id,
+      sessionKey: stint.session_key,
+      driverNumber: stint.driver_number,
+      stintNumber: stint.stint_number,
+      lapStart: stint.lap_start,
+      lapEnd: stint.lap_end,
+      compound: stint.compound,
+      tyreAgeAtStart: stint.tyre_age_at_start
+    });
+  }
+
   const operations: Prisma.PrismaPromise<unknown>[] = [
     prisma.sessionResult.deleteMany({
       where: {
@@ -456,6 +516,11 @@ async function refreshSessionDerivedData(input: {
       }
     }),
     prisma.pitStop.deleteMany({
+      where: {
+        sessionId: input.sessionId
+      }
+    }),
+    prisma.stint.deleteMany({
       where: {
         sessionId: input.sessionId
       }
@@ -474,6 +539,14 @@ async function refreshSessionDerivedData(input: {
     operations.push(
       prisma.pitStop.createMany({
         data: pitRows
+      })
+    );
+  }
+
+  if (stintRows.length > 0) {
+    operations.push(
+      prisma.stint.createMany({
+        data: stintRows
       })
     );
   }

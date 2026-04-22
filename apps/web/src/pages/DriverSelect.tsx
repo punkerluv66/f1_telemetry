@@ -213,13 +213,29 @@ export function DriverSelect() {
               <div className="field">
                 <label>{leftDriver.acronym} lap</label>
                 <select value={leftLapId ?? ""} onChange={(event) => setLeftLapId(Number(event.target.value))}>
-                  {leftLapOptions.map((lap) => <option key={lap.id} value={lap.id}>{formatLapOption(lap)}</option>)}
+                  {leftLapOptions.map((lap) => (
+                    <option 
+                      key={lap.id} 
+                      value={lap.id}
+                      style={lap.lapDuration === leftDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
+                    >
+                      {lap.lapDuration === leftDriver.stats.bestLapSeconds ? "⭐ " : ""}{formatLapOption(lap)}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="field">
                 <label>{rightDriver.acronym} lap</label>
                 <select value={rightLapId ?? ""} onChange={(event) => setRightLapId(Number(event.target.value))}>
-                  {rightLapOptions.map((lap) => <option key={lap.id} value={lap.id}>{formatLapOption(lap)}</option>)}
+                  {rightLapOptions.map((lap) => (
+                    <option 
+                      key={lap.id} 
+                      value={lap.id}
+                      style={lap.lapDuration === rightDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
+                    >
+                      {lap.lapDuration === rightDriver.stats.bestLapSeconds ? "⭐ " : ""}{formatLapOption(lap)}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="field">

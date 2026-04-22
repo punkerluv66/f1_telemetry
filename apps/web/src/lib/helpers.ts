@@ -40,9 +40,23 @@ export function compareLapDurations(left: DriverLapSummary, right: DriverLapSumm
 }
 
 export function formatLapOption(lap: DriverLapSummary) {
+  let tyreIcon = "";
+  switch (lap.tyreCompound?.toUpperCase()) {
+    case "SOFT": tyreIcon = "🔴 S"; break;
+    case "MEDIUM": tyreIcon = "🟡 M"; break;
+    case "HARD": tyreIcon = "⚪ H"; break;
+    case "INTERMEDIATE": tyreIcon = "🟢 I"; break;
+    case "WET": tyreIcon = "🔵 W"; break;
+    default: tyreIcon = lap.tyreCompound ? `🔘 ${lap.tyreCompound[0]}` : "";
+  }
+  
+  const ageStr = lap.tyreAge !== undefined && lap.tyreAge !== null ? `(${lap.tyreAge} laps old)` : "";
+  const tyreInfo = tyreIcon ? `${tyreIcon} ${ageStr}`.trim() : null;
+
   const tags = [
     `Lap ${lap.lapNumber}`,
     formatLapTime(lap.lapDuration),
+    tyreInfo,
     lap.isPitLap ? "pit lap" : null,
     lap.isPitOutLap ? "out lap" : null,
     lap.telemetrySampleCount > 0 ? "cached telemetry" : "telemetry on demand"
