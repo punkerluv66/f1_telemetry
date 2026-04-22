@@ -104,6 +104,8 @@ export interface ChartPoint {
   brakePct: number;
   gear: number | null;
   rpm: number | null;
+  x: number | null;
+  y: number | null;
 }
 
 export interface BrakingEvent {

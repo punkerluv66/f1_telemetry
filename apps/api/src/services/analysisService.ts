@@ -17,6 +17,8 @@ type ComparablePoint = {
   brakePct: number;
   gear: number | null;
   rpm: number | null;
+  x: number | null;
+  y: number | null;
 };
 
 type AlignedPoint = ComparablePoint;
@@ -392,7 +394,9 @@ function normalizeTelemetry(points: TelemetryPoint[]): ComparablePoint[] {
       throttlePct: point.throttlePct,
       brakePct: point.brakePct,
       gear: point.gear,
-      rpm: point.rpm
+      rpm: point.rpm,
+      x: point.x,
+      y: point.y
     };
 
     if (normalized.length > 0 && Math.abs(normalized[normalized.length - 1].distanceM - distanceM) < 0.001) {
@@ -441,7 +445,9 @@ function alignTelemetry(params: {
       throttlePct: round(interpolate(left.throttlePct, right.throttlePct, ratio)),
       brakePct: round(interpolate(left.brakePct, right.brakePct, ratio)),
       gear: roundNullable(interpolateNullable(left.gear, right.gear, ratio)),
-      rpm: roundNullable(interpolateNullable(left.rpm, right.rpm, ratio))
+      rpm: roundNullable(interpolateNullable(left.rpm, right.rpm, ratio)),
+      x: roundNullable(interpolateNullable(left.x, right.x, ratio)),
+      y: roundNullable(interpolateNullable(left.y, right.y, ratio))
     });
   }
 
