@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id               Int               @id @default(autoincrement())
+  sessionKey       Int               @unique
+  meetingKey       Int
+  sessionType      String
+  sessionName      String
+  circuitShortName String
+  countryCode      String?
+  countryName      String
+  location         String
+  gmtOffset        String?
+  year             Int
+  dateStart        DateTime
+  dateEnd          DateTime?
+  importedAt       DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  drivers          Driver[]
+  laps             Lap[]
+  telemetryPoints  TelemetryPoint[]
+  comparisonCaches ComparisonCache[]
+  sessionResults   SessionResult[]
+  pitStops         PitStop[]
+}
+
+model Driver {
+  id            Int      @id @default(autoincrement())
+  sessionId     Int
+  sessionKey    Int
+  driverNumber  Int
+  broadcastName String?
+  fullName      String
+  firstName     String?
+  lastName      String?
+  acronym       String
+  teamName      String
+  teamColour    String?
+  headshotUrl   String?
+  countryCode   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  laps          Lap[]
+  telemetryPoints TelemetryPoint[]
+  sessionResult SessionResult?
+  pitStops      PitStop[]
+
+  @@unique([sessionId, driverNumber])
+  @@index([sessionId, acronym])
+}
+
+model Lap {
+  id                Int               @id @default(autoincrement())
+  sessionId         Int
+  driverId          Int
+  sessionKey        Int
+  driverNumber      Int
+  lapNumber         Int
+  dateStart         DateTime
+  lapDuration       Float?
+  durationSector1   Float?
+  durationSector2   Float?
+  durationSector3   Float?
+  speedTrap         Int?
+  speedI1           Int?
+  speedI2           Int?
+  isPitOutLap       Boolean           @default(false)
+  telemetryImportedAt DateTime?
+  telemetryStatus   String            @default("pending")
+  telemetryMessage  String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  driver            Driver            @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  session           Session           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  telemetryPoints   TelemetryPoint[]
+  referenceCaches   ComparisonCache[] @relation("ReferenceLapCache")
+  targetCaches      ComparisonCache[] @relation("TargetLapCache")
+
+  @@unique([sessionId, driverId, lapNumber])
+  @@index([sessionId, lapDuration])
+  @@index([driverId, dateStart])
+}
+
+model TelemetryPoint {
+  id           Int      @id @default(autoincrement())
+  lapId         Int
+  sessionId     Int
+  driverId      Int
+  sampleTime    DateTime
+  timeOffsetMs  Float
+  distanceM     Float
+  relativeDistance Float
+  speedKph      Float
+  throttlePct   Float
+  brakePct      Float
+  rpm           Int?
+  gear          Int?
+  drs           Int?
+  x             Float?
+  y             Float?
+  z             Float?
+  createdAt     DateTime @default(now())
+  lap           Lap      @relation(fields: [lapId], references: [id], onDelete: Cascade)
+  session       Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  driver        Driver    @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([lapId, distanceM])
+  @@index([lapId, sampleTime])
+}
+
+model ComparisonCache {
+  id              Int      @id @default(autoincrement())
+  sessionId       Int
+  referenceLapId  Int
+  targetLapId     Int
+  distanceStep    Int
+  smoothingWindow Int
+  payload         Json
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  referenceLap    Lap      @relation("ReferenceLapCache", fields: [referenceLapId], references: [id], onDelete: Cascade)
+  targetLap       Lap      @relation("TargetLapCache", fields: [targetLapId], references: [id], onDelete: Cascade)
+
+  @@unique([referenceLapId, targetLapId, distanceStep, smoothingWindow])
+}
+
+model SessionResult {
+  id            Int      @id @default(autoincrement())
+  sessionId      Int
+  driverId       Int      @unique
+  sessionKey     Int
+  driverNumber   Int
+  position       Int?
+  points         Int?
+  numberOfLaps   Int?
+  dnf            Boolean  @default(false)
+  dns            Boolean  @default(false)
+  dsq            Boolean  @default(false)
+  rawDuration    Json?
+  rawGapToLeader Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  driver         Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, driverId])
+  @@index([sessionId, position])
+}
+
+model PitStop {
+  id           Int      @id @default(autoincrement())
+  sessionId     Int
+  driverId      Int
+  sessionKey    Int
+  driverNumber  Int
+  lapNumber     Int?
+  date          DateTime
+  laneDuration  Float?
+  stopDuration  Float?
+  pitDuration   Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  driver        Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, driverId, date])
+  @@index([sessionId, driverId, lapNumber])
+}

@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+coverage
+*.log
+apps/web/dist
+apps/api/dist
+apps/api/src/generated
+*.tsbuildinfo
