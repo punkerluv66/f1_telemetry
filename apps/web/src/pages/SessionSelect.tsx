@@ -68,17 +68,42 @@ export function SessionSelect() {
 
   return (
     <div className="shell shell--full">
-      <main className="dashboard dashboard--wide" style={{ gridColumn: "1 / -1" }}>
-        <section className="hero panel" style={{ textAlign: "center", padding: "4rem 2rem" }}>
+      <main className="dashboard dashboard--wide session-page">
+        <section className="hero panel session-hero">
           <p className="hero__eyebrow">Formula 1 Telemetry Platform</p>
           <h2>Select a Session to Analyze</h2>
-          <p style={{ margin: "0 auto" }}>Search for a race or qualifying session from the OpenF1 API, import it, and start analyzing telemetry data.</p>
+          <p>
+            Search for a race or qualifying session from the OpenF1 API, import it,
+            and start analyzing telemetry data.
+          </p>
+          <div className="session-hero__metrics">
+            <div className="session-metric">
+              <strong>{health?.sessionsCount ?? 0}</strong>
+              <span>Imported sessions</span>
+            </div>
+            <div className="session-metric">
+              <strong>{health?.lapsCount ?? 0}</strong>
+              <span>Laps stored locally</span>
+            </div>
+            <div className="session-metric">
+              <strong>{remoteSessions.length}</strong>
+              <span>Search matches loaded</span>
+            </div>
+          </div>
           {error ? <p className="error-banner">{error}</p> : null}
         </section>
 
-        <section className="panel">
-          <div style={{ display: "flex", gap: "1rem", alignItems: "center", flexWrap: "wrap", marginBottom: "1.5rem" }}>
-            <div className="field" style={{ marginBottom: 0, minWidth: "150px" }}>
+        <section className="panel session-section">
+          <div className="session-section__header">
+            <div>
+              <h3 className="section-title">OpenF1 F1 Results</h3>
+              <p className="muted">Use a simple filter, then import the session you want to inspect.</p>
+            </div>
+            <p className="muted">Showing up to 10 sessions</p>
+          </div>
+
+          <div className="session-filter-bar">
+            <div className="field session-filter">
               <label>Year</label>
               <input
                 type="number"
@@ -86,7 +111,7 @@ export function SessionSelect() {
                 onChange={(event) => setRemoteYear(Number(event.target.value))}
               />
             </div>
-            <div className="field" style={{ marginBottom: 0, minWidth: "200px" }}>
+            <div className="field session-filter session-filter--wide">
               <label>Session type</label>
               <select
                 value={remoteSessionName}
@@ -99,26 +124,26 @@ export function SessionSelect() {
                 ))}
               </select>
             </div>
-            <button 
-              type="button" 
-              style={{ width: "auto", alignSelf: "flex-end", padding: "14px 24px" }}
-              onClick={() => void runRemoteSearch(remoteYear, remoteSessionName)} 
-              disabled={loadingRemote}
-            >
-              {loadingRemote ? "Searching..." : "Find Sessions"}
-            </button>
+            <div className="session-filter-bar__action">
+              <button
+                type="button"
+                onClick={() => void runRemoteSearch(remoteYear, remoteSessionName)}
+                disabled={loadingRemote}
+              >
+                {loadingRemote ? "Searching..." : "Find Sessions"}
+              </button>
+            </div>
           </div>
-          
-          <h3 className="section-title">OpenF1 F1 Results</h3>
-          <div style={{ display: "flex", overflowX: "auto", gap: "1rem", paddingBottom: "1rem" }}>
+
+          <div className="session-card-rail">
             {remoteSessions.length > 0 ? remoteSessions.slice(0, 10).map((session) => (
-              <article className="panel panel--dark" key={session.session_key} style={{ minWidth: "300px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                <div style={{ padding: "1.5rem" }}>
-                  <h3 style={{ margin: "0 0 0.5rem" }}>{session.country_name}</h3>
-                  <p className="muted" style={{ margin: 0 }}>{session.year} • {session.session_name}</p>
-                  <p className="muted" style={{ margin: "0.5rem 0 0", fontSize: "0.85rem" }}>{session.circuit_short_name}</p>
+              <article className="panel panel--dark session-card" key={session.session_key}>
+                <div className="session-card__content">
+                  <h3 className="session-card__title">{session.country_name}</h3>
+                  <p className="session-card__meta">{session.year} - {session.session_name}</p>
+                  <p className="session-card__circuit">{session.circuit_short_name}</p>
                 </div>
-                <div style={{ padding: "0 1.5rem 1.5rem" }}>
+                <div className="session-card__actions">
                   <button
                     type="button"
                     onClick={() => void handleImportSession(session.session_key)}
@@ -128,25 +153,36 @@ export function SessionSelect() {
                   </button>
                 </div>
               </article>
-            )) : <p className="muted">No sessions found for this query.</p>}
+            )) : (
+              <div className="session-empty">
+                <p className="muted">No sessions found for this query.</p>
+              </div>
+            )}
           </div>
         </section>
 
         {importedSessions.length > 0 ? (
-          <section className="panel">
-            <h3 className="section-title">Previously Imported Sessions</h3>
-            <div style={{ display: "flex", overflowX: "auto", gap: "1rem", paddingBottom: "1rem" }}>
+          <section className="panel session-section">
+            <div className="session-section__header">
+              <div>
+                <h3 className="section-title">Previously Imported Sessions</h3>
+                <p className="muted">Jump back into sessions already cached in your local database.</p>
+              </div>
+              <p className="muted">{importedSessions.length} sessions available</p>
+            </div>
+
+            <div className="session-card-rail">
               {importedSessions.map((session) => (
-                <article className="panel panel--dark" key={session.id} style={{ minWidth: "300px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                  <div style={{ padding: "1.5rem" }}>
-                    <h3 style={{ margin: "0 0 0.5rem" }}>{session.countryName}</h3>
-                    <p className="muted" style={{ margin: 0 }}>{session.year} • {session.sessionName}</p>
-                    <p className="muted" style={{ margin: "0.5rem 0 0", fontSize: "0.85rem" }}>{session.circuitShortName}</p>
-                    <div style={{ marginTop: "1rem", fontSize: "0.85rem", color: "var(--sidebar-muted)" }}>
-                      {session._count.drivers} drivers • {session._count.laps} laps
-                    </div>
+                <article className="panel panel--dark session-card" key={session.id}>
+                  <div className="session-card__content">
+                    <h3 className="session-card__title">{session.countryName}</h3>
+                    <p className="session-card__meta">{session.year} - {session.sessionName}</p>
+                    <p className="session-card__circuit">{session.circuitShortName}</p>
+                    <p className="session-card__stats">
+                      {session._count.drivers} drivers - {session._count.laps} laps
+                    </p>
                   </div>
-                  <div style={{ padding: "0 1.5rem 1.5rem" }}>
+                  <div className="session-card__actions">
                     <button
                       type="button"
                       onClick={() => navigate(`/session/${session.id}`)}

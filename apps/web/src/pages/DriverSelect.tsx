@@ -44,12 +44,10 @@ export function DriverSelect() {
   const [overview, setOverview] = useState<ImportedSessionOverview | null>(null);
   const [leftDriverId, setLeftDriverId] = useState<number | null>(null);
   const [rightDriverId, setRightDriverId] = useState<number | null>(null);
-  
   const [leftLapId, setLeftLapId] = useState<number | null>(null);
   const [rightLapId, setRightLapId] = useState<number | null>(null);
   const [distanceStep, setDistanceStep] = useState(10);
   const [smoothingWindow, setSmoothingWindow] = useState(5);
-  
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
   const [hoverDistance, setHoverDistance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,30 +57,43 @@ export function DriverSelect() {
   const deferredComparison = useDeferredValue(comparison);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      return;
+    }
+
     void loadOverview(sessionId);
   }, [sessionId]);
 
   useEffect(() => {
-    if (!overview) return;
+    if (!overview) {
+      return;
+    }
+
     setLeftDriverId((current) => {
       if (current && overview.driverSummaries.some((driver) => driver.id === current)) {
         return current;
       }
+
       return overview.defaultDriverPair.leftDriverId;
     });
+
     setRightDriverId((current) => {
       if (current && overview.driverSummaries.some((driver) => driver.id === current)) {
         return current;
       }
+
       return overview.defaultDriverPair.rightDriverId;
     });
   }, [overview]);
 
   useEffect(() => {
-    if (!overview) return;
+    if (!overview) {
+      return;
+    }
+
     const nextLeftDriver = getDriverById(overview, leftDriverId);
     const nextRightDriver = getDriverById(overview, rightDriverId);
+
     setLeftLapId((current) => getPreferredLapId(nextLeftDriver, current));
     setRightLapId((current) => getPreferredLapId(nextRightDriver, current));
     setComparison(null);
@@ -94,6 +105,7 @@ export function DriverSelect() {
       setLoadingOverview(true);
       setError(null);
       const payload = await getSessionOverview(id);
+
       startTransition(() => {
         setOverview(payload);
         setComparison(null);
@@ -107,7 +119,10 @@ export function DriverSelect() {
   }
 
   async function handleCompare() {
-    if (!overview || !leftLapId || !rightLapId) return;
+    if (!overview || !leftLapId || !rightLapId) {
+      return;
+    }
+
     try {
       setLoadingCompare(true);
       setError(null);
@@ -118,6 +133,7 @@ export function DriverSelect() {
         distanceStep,
         smoothingWindow
       });
+
       startTransition(() => {
         setComparison(payload);
       });
@@ -130,24 +146,22 @@ export function DriverSelect() {
 
   const leftDriver = overview ? getDriverById(overview, leftDriverId) : null;
   const rightDriver = overview ? getDriverById(overview, rightDriverId) : null;
-  
   const leftLapOptions = leftDriver?.laps.filter((lap) => lap.lapDuration !== null) ?? [];
   const rightLapOptions = rightDriver?.laps.filter((lap) => lap.lapDuration !== null) ?? [];
 
   return (
     <div className="shell shell--full">
-      <main className="dashboard dashboard--wide" style={{ gridColumn: "1 / -1" }}>
-        
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <main className="dashboard dashboard--wide">
+        <div className="page-header">
           <button type="button" onClick={() => navigate("/")} className="button-secondary">
-            ← Back to Sessions
+            Back to Sessions
           </button>
-          {overview && (
-            <h2 style={{ margin: 0, fontFamily: "var(--font-display)" }}>
-              {overview.year} {overview.countryName} • {overview.sessionName}
+          {overview ? (
+            <h2 className="page-header__title">
+              {overview.year} {overview.countryName} - {overview.sessionName}
             </h2>
-          )}
-          <div style={{ width: "120px" }}></div>
+          ) : null}
+          <div className="page-header__spacer" />
         </div>
 
         {error ? <p className="error-banner">{error}</p> : null}
@@ -155,7 +169,7 @@ export function DriverSelect() {
 
         <section className="driver-grid">
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-             <div className="panel panel--dark controls">
+            <div className="panel panel--dark controls">
               <div className="field" style={{ marginBottom: 0 }}>
                 <label>Driver 1</label>
                 <select
@@ -165,21 +179,21 @@ export function DriverSelect() {
                 >
                   {overview?.driverSummaries.map((driver) => (
                     <option value={driver.id} key={driver.id}>
-                      {driver.result.classificationLabel} • {driver.acronym} • {driver.fullName}
+                      {driver.result.classificationLabel} - {driver.acronym} - {driver.fullName}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
-            {leftDriver && (
+            {leftDriver ? (
               <DriverSummaryCard sideLabel="Driver 1" driver={leftDriver} sessionType={overview?.sessionType ?? null} />
-            )}
+            ) : null}
           </div>
 
           <div className="versus-divider">VS</div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-             <div className="panel panel--dark controls">
+            <div className="panel panel--dark controls">
               <div className="field" style={{ marginBottom: 0 }}>
                 <label>Driver 2</label>
                 <select
@@ -189,15 +203,15 @@ export function DriverSelect() {
                 >
                   {overview?.driverSummaries.map((driver) => (
                     <option value={driver.id} key={driver.id}>
-                      {driver.result.classificationLabel} • {driver.acronym} • {driver.fullName}
+                      {driver.result.classificationLabel} - {driver.acronym} - {driver.fullName}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
-            {rightDriver && (
+            {rightDriver ? (
               <DriverSummaryCard sideLabel="Driver 2" driver={rightDriver} sessionType={overview?.sessionType ?? null} />
-            )}
+            ) : null}
           </div>
         </section>
 
@@ -214,12 +228,13 @@ export function DriverSelect() {
                 <label>{leftDriver.acronym} lap</label>
                 <select value={leftLapId ?? ""} onChange={(event) => setLeftLapId(Number(event.target.value))}>
                   {leftLapOptions.map((lap) => (
-                    <option 
-                      key={lap.id} 
+                    <option
+                      key={lap.id}
                       value={lap.id}
                       style={lap.lapDuration === leftDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
                     >
-                      {lap.lapDuration === leftDriver.stats.bestLapSeconds ? "⭐ " : ""}{formatLapOption(lap)}
+                      {lap.lapDuration === leftDriver.stats.bestLapSeconds ? "* " : ""}
+                      {formatLapOption(lap)}
                     </option>
                   ))}
                 </select>
@@ -228,23 +243,38 @@ export function DriverSelect() {
                 <label>{rightDriver.acronym} lap</label>
                 <select value={rightLapId ?? ""} onChange={(event) => setRightLapId(Number(event.target.value))}>
                   {rightLapOptions.map((lap) => (
-                    <option 
-                      key={lap.id} 
+                    <option
+                      key={lap.id}
                       value={lap.id}
                       style={lap.lapDuration === rightDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
                     >
-                      {lap.lapDuration === rightDriver.stats.bestLapSeconds ? "⭐ " : ""}{formatLapOption(lap)}
+                      {lap.lapDuration === rightDriver.stats.bestLapSeconds ? "* " : ""}
+                      {formatLapOption(lap)}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="field">
                 <label>Distance step (m)</label>
-                <input type="number" value={distanceStep} onChange={(event) => setDistanceStep(Number(event.target.value))} min={5} max={100} step={5} />
+                <input
+                  type="number"
+                  value={distanceStep}
+                  onChange={(event) => setDistanceStep(Number(event.target.value))}
+                  min={5}
+                  max={100}
+                  step={5}
+                />
               </div>
               <div className="field">
                 <label>Smoothing window</label>
-                <input type="number" value={smoothingWindow} onChange={(event) => setSmoothingWindow(Number(event.target.value))} min={1} max={21} step={2} />
+                <input
+                  type="number"
+                  value={smoothingWindow}
+                  onChange={(event) => setSmoothingWindow(Number(event.target.value))}
+                  min={1}
+                  max={21}
+                  step={2}
+                />
               </div>
             </div>
             <div className="lap-panel__actions">
@@ -280,12 +310,36 @@ export function DriverSelect() {
 
             <section className="chart-grid">
               {chartDefinitions.map((definition) => {
-                const series = definition.key === "deltaMs" ? [
-                  { label: `${deferredComparison.targetLap.driver.acronym} - ${deferredComparison.referenceLap.driver.acronym}`, color: "#7d3cf8", points: deferredComparison.delta.points.map((p) => ({ distanceM: p.distanceM, value: p.deltaMs })) }
-                ] : [
-                  { label: `${deferredComparison.referenceLap.driver.acronym} lap`, color: deferredComparison.referenceLap.driver.color, points: deferredComparison.referenceLap.points.map((p) => ({ distanceM: p.distanceM, value: p[definition.key] as number })) },
-                  { label: `${deferredComparison.targetLap.driver.acronym} lap`, color: deferredComparison.targetLap.driver.color, points: deferredComparison.targetLap.points.map((p) => ({ distanceM: p.distanceM, value: p[definition.key] as number })) }
-                ];
+                const series = definition.key === "deltaMs"
+                  ? [
+                      {
+                        label: `${deferredComparison.targetLap.driver.acronym} - ${deferredComparison.referenceLap.driver.acronym}`,
+                        color: "#7d3cf8",
+                        points: deferredComparison.delta.points.map((point) => ({
+                          distanceM: point.distanceM,
+                          value: point.deltaMs
+                        }))
+                      }
+                    ]
+                  : [
+                      {
+                        label: `${deferredComparison.referenceLap.driver.acronym} lap`,
+                        color: deferredComparison.referenceLap.driver.color,
+                        points: deferredComparison.referenceLap.points.map((point) => ({
+                          distanceM: point.distanceM,
+                          value: point[definition.key] as number
+                        }))
+                      },
+                      {
+                        label: `${deferredComparison.targetLap.driver.acronym} lap`,
+                        color: deferredComparison.targetLap.driver.color,
+                        points: deferredComparison.targetLap.points.map((point) => ({
+                          distanceM: point.distanceM,
+                          value: point[definition.key] as number
+                        }))
+                      }
+                    ];
+
                 const eventMarkerGroups = definition.key === "deltaMs"
                   ? undefined
                   : [
@@ -309,7 +363,18 @@ export function DriverSelect() {
                 );
 
                 return (
-                  <ChartCard key={definition.key} title={definition.title} subtitle={definition.subtitle} unit={definition.unit} series={series} maxDistance={maxDistance} hoverDistance={hoverDistance} onHover={setHoverDistance} centerZero={"centerZero" in definition ? definition.centerZero : undefined} eventMarkerGroups={eventMarkerGroups} />
+                  <ChartCard
+                    key={definition.key}
+                    title={definition.title}
+                    subtitle={definition.subtitle}
+                    unit={definition.unit}
+                    series={series}
+                    maxDistance={maxDistance}
+                    hoverDistance={hoverDistance}
+                    onHover={setHoverDistance}
+                    centerZero={"centerZero" in definition ? definition.centerZero : undefined}
+                    eventMarkerGroups={eventMarkerGroups}
+                  />
                 );
               })}
             </section>
