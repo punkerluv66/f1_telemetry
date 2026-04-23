@@ -23,6 +23,17 @@ type ComparablePoint = {
 
 type AlignedPoint = ComparablePoint;
 
+type NormalizedTelemetry = {
+  points: ComparablePoint[];
+  rawLapLengthM: number;
+  normalizedLapLengthM: number;
+  scaleFactor: number;
+  firstSampleOffsetMs: number;
+};
+
+const DISTANCE_NORMALIZATION_VERSION = 2;
+const DISTANCE_NORMALIZATION_MODE = "integrated-distance-scaled";
+
 export async function ensureLapTelemetryImported(lapId: number) {
   const lap = await getLapWithRelations(lapId);
   const pointCount = await prisma.telemetryPoint.count({
@@ -119,7 +130,7 @@ export async function compareLaps(params: {
     }
   });
 
-  if (cache) {
+  if (cache && isComparisonCacheCompatible(cache.payload)) {
     return cache.payload;
   }
 
@@ -159,23 +170,23 @@ export async function compareLaps(params: {
     })
   ]);
 
-  const rawReferenceLength = referenceLap.telemetryPoints[referenceLap.telemetryPoints.length - 1]?.distanceM ?? 0;
-
   const normalizedReference = normalizeTelemetry(referenceLap.telemetryPoints);
-  const normalizedTarget = normalizeTelemetry(targetLap.telemetryPoints, rawReferenceLength);
+  const normalizedTarget = normalizeTelemetry(targetLap.telemetryPoints, {
+    scaleToDistanceM: normalizedReference.normalizedLapLengthM
+  });
   const commonDistance = Math.min(
-    normalizedReference[normalizedReference.length - 1]?.distanceM ?? 0,
-    normalizedTarget[normalizedTarget.length - 1]?.distanceM ?? 0
+    normalizedReference.normalizedLapLengthM,
+    normalizedTarget.normalizedLapLengthM
   );
 
   const referenceAligned = alignTelemetry({
-    points: normalizedReference,
+    points: normalizedReference.points,
     distanceStep: params.distanceStep,
     smoothingWindow: params.smoothingWindow,
     maxDistance: commonDistance
   });
   const targetAligned = alignTelemetry({
-    points: normalizedTarget,
+    points: normalizedTarget.points,
     distanceStep: params.distanceStep,
     smoothingWindow: params.smoothingWindow,
     maxDistance: commonDistance
@@ -196,10 +207,12 @@ export async function compareLaps(params: {
     },
     settings: {
       distanceStep: params.distanceStep,
-      smoothingWindow: params.smoothingWindow
+      smoothingWindow: params.smoothingWindow,
+      normalizationMode: DISTANCE_NORMALIZATION_MODE,
+      normalizationVersion: DISTANCE_NORMALIZATION_VERSION
     },
-    referenceLap: buildLapPayload(referenceLap, referenceAligned),
-    targetLap: buildLapPayload(targetLap, targetAligned),
+    referenceLap: buildLapPayload(referenceLap, referenceAligned, normalizedReference),
+    targetLap: buildLapPayload(targetLap, targetAligned, normalizedTarget),
     delta: {
       points: deltaPoints,
       summary: summarizeDelta(deltaPoints, referenceLap.id, targetLap.id)
@@ -389,7 +402,12 @@ function interpolateLocationState(
   };
 }
 
-function normalizeTelemetry(points: TelemetryPoint[]): ComparablePoint[] {
+function normalizeTelemetry(
+  points: TelemetryPoint[],
+  options?: {
+    scaleToDistanceM?: number;
+  }
+): NormalizedTelemetry {
   const normalized: ComparablePoint[] = [];
   let lastDistance = 0;
 
@@ -416,7 +434,26 @@ function normalizeTelemetry(points: TelemetryPoint[]): ComparablePoint[] {
     normalized.push(current);
   }
 
-  return normalized;
+  const rawLapLengthM = normalized[normalized.length - 1]?.distanceM ?? 0;
+  const requestedDistance =
+    options?.scaleToDistanceM && options.scaleToDistanceM > 0 ? options.scaleToDistanceM : rawLapLengthM;
+  const rawScaleFactor = rawLapLengthM > 0 ? requestedDistance / rawLapLengthM : 1;
+  const scaleFactor =
+    Number.isFinite(rawScaleFactor) && rawScaleFactor > 0 ? rawScaleFactor : 1;
+  const scaledPoints = deduplicateComparablePoints(
+    normalized.map((point) => ({
+      ...point,
+      distanceM: round(point.distanceM * scaleFactor)
+    }))
+  );
+
+  return {
+    points: scaledPoints,
+    rawLapLengthM: round(rawLapLengthM),
+    normalizedLapLengthM: round(scaledPoints[scaledPoints.length - 1]?.distanceM ?? 0),
+    scaleFactor: round(scaleFactor),
+    firstSampleOffsetMs: round(normalized[0]?.timeOffsetMs ?? 0)
+  };
 }
 
 function alignTelemetry(params: {
@@ -497,7 +534,8 @@ function buildLapPayload(
     driver: Driver;
     telemetryPoints: TelemetryPoint[];
   },
-  alignedPoints: AlignedPoint[]
+  alignedPoints: AlignedPoint[],
+  normalizedTelemetry: NormalizedTelemetry
 ) {
   return {
     id: lap.id,
@@ -520,8 +558,41 @@ function buildLapPayload(
       peakBrakePct: round(Math.max(...alignedPoints.map((point) => point.brakePct))),
       lapTimeMs: round(alignedPoints[alignedPoints.length - 1]?.timeOffsetMs ?? 0)
     },
+    distance: {
+      rawLapLengthM: normalizedTelemetry.rawLapLengthM,
+      normalizedLapLengthM: normalizedTelemetry.normalizedLapLengthM,
+      scaleFactor: normalizedTelemetry.scaleFactor,
+      firstSampleOffsetMs: normalizedTelemetry.firstSampleOffsetMs
+    },
     events: detectBrakingZones(alignedPoints)
   };
+}
+
+function deduplicateComparablePoints(points: ComparablePoint[]) {
+  const deduplicated: ComparablePoint[] = [];
+
+  for (const point of points) {
+    if (
+      deduplicated.length > 0 &&
+      Math.abs(deduplicated[deduplicated.length - 1].distanceM - point.distanceM) < 0.001
+    ) {
+      deduplicated[deduplicated.length - 1] = point;
+      continue;
+    }
+
+    deduplicated.push(point);
+  }
+
+  return deduplicated;
+}
+
+function isComparisonCacheCompatible(payload: unknown) {
+  if (typeof payload !== "object" || payload === null || !("settings" in payload)) {
+    return false;
+  }
+
+  const settings = (payload as { settings?: { normalizationVersion?: unknown } }).settings;
+  return settings?.normalizationVersion === DISTANCE_NORMALIZATION_VERSION;
 }
 
 function detectBrakingZones(points: AlignedPoint[]) {

@@ -286,6 +286,22 @@ export function DriverSelect() {
                   { label: `${deferredComparison.referenceLap.driver.acronym} lap`, color: deferredComparison.referenceLap.driver.color, points: deferredComparison.referenceLap.points.map((p) => ({ distanceM: p.distanceM, value: p[definition.key] as number })) },
                   { label: `${deferredComparison.targetLap.driver.acronym} lap`, color: deferredComparison.targetLap.driver.color, points: deferredComparison.targetLap.points.map((p) => ({ distanceM: p.distanceM, value: p[definition.key] as number })) }
                 ];
+                const eventMarkerGroups = definition.key === "deltaMs"
+                  ? undefined
+                  : [
+                      {
+                        key: deferredComparison.referenceLap.driver.acronym,
+                        color: deferredComparison.referenceLap.driver.color,
+                        dashArray: "4 6",
+                        events: deferredComparison.referenceLap.events
+                      },
+                      {
+                        key: deferredComparison.targetLap.driver.acronym,
+                        color: deferredComparison.targetLap.driver.color,
+                        dashArray: "2 8",
+                        events: deferredComparison.targetLap.events
+                      }
+                    ];
 
                 const maxDistance = Math.max(
                   deferredComparison.referenceLap.points[deferredComparison.referenceLap.points.length - 1]?.distanceM ?? 0,
@@ -293,7 +309,7 @@ export function DriverSelect() {
                 );
 
                 return (
-                  <ChartCard key={definition.key} title={definition.title} subtitle={definition.subtitle} unit={definition.unit} series={series} maxDistance={maxDistance} hoverDistance={hoverDistance} onHover={setHoverDistance} centerZero={"centerZero" in definition ? definition.centerZero : undefined} eventMarkers={deferredComparison.referenceLap.events} />
+                  <ChartCard key={definition.key} title={definition.title} subtitle={definition.subtitle} unit={definition.unit} series={series} maxDistance={maxDistance} hoverDistance={hoverDistance} onHover={setHoverDistance} centerZero={"centerZero" in definition ? definition.centerZero : undefined} eventMarkerGroups={eventMarkerGroups} />
                 );
               })}
             </section>

@@ -15,6 +15,13 @@ type EventMarker = {
   peakDistanceM: number;
 };
 
+type EventMarkerGroup = {
+  key: string;
+  color: string;
+  dashArray?: string;
+  events: EventMarker[];
+};
+
 type ChartCardProps = {
   title: string;
   subtitle: string;
@@ -24,7 +31,7 @@ type ChartCardProps = {
   hoverDistance: number | null;
   onHover: (distance: number | null) => void;
   centerZero?: boolean;
-  eventMarkers?: EventMarker[];
+  eventMarkerGroups?: EventMarkerGroup[];
 };
 
 export function ChartCard(props: ChartCardProps) {
@@ -109,22 +116,25 @@ export function ChartCard(props: ChartCardProps) {
             );
           })}
 
-          {props.eventMarkers?.map((event, index) => {
-            const x = mapDistance(event.peakDistanceM, width, padding, props.maxDistance);
+          {props.eventMarkerGroups?.flatMap((group) =>
+            group.events.map((event, index) => {
+              const x = mapDistance(event.peakDistanceM, width, padding, props.maxDistance);
 
-            return (
-              <line
-                key={`event-${index}`}
-                x1={x}
-                y1={padding.top}
-                x2={x}
-                y2={height - padding.bottom}
-                stroke="rgba(207,47,39,0.18)"
-                strokeWidth={2}
-                strokeDasharray="4 6"
-              />
-            );
-          })}
+              return (
+                <line
+                  key={`${group.key}-${index}`}
+                  x1={x}
+                  y1={padding.top}
+                  x2={x}
+                  y2={height - padding.bottom}
+                  stroke={group.color}
+                  strokeOpacity={0.18}
+                  strokeWidth={2}
+                  strokeDasharray={group.dashArray ?? "4 6"}
+                />
+              );
+            })
+          )}
 
           {props.centerZero ? (
             <line
