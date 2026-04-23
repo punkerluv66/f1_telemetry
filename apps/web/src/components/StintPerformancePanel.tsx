@@ -1,15 +1,20 @@
+import { useState, MouseEvent } from "react";
 import type { DriverSessionSummary } from "../types";
 import { formatLapTime } from "../lib/formatters";
 
 type CleanLapPoint = {
   lapNumber: number;
   lapDuration: number;
+  tyreCompound?: string | null;
+  tyreAge?: number | null;
 };
 
 export function StintPerformancePanel(props: {
   leftDriver: DriverSessionSummary;
   rightDriver: DriverSessionSummary;
 }) {
+  const [hoverLap, setHoverLap] = useState<number | null>(null);
+
   const leftSeries = getCleanLapSeries(props.leftDriver);
   const rightSeries = getCleanLapSeries(props.rightDriver);
   const allPoints = [...leftSeries, ...rightSeries];
@@ -37,6 +42,28 @@ export function StintPerformancePanel(props: {
   const maxValue = Math.max(...allPoints.map((point) => point.lapDuration));
   const lapTicks = buildLapTicks(minLap, maxLap);
 
+  const handleMouseMove = (e: MouseEvent<SVGSVGElement>) => {
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = width / rect.width;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    
+    const usableWidth = width - padding.left - padding.right;
+    const range = Math.max(maxLap - minLap, 1);
+    
+    let closestLap = minLap + Math.round(((mouseX - padding.left) / usableWidth) * range);
+    closestLap = Math.max(minLap, Math.min(maxLap, closestLap));
+
+    if (mouseX >= padding.left - 20 && mouseX <= width - padding.right + 20) {
+      setHoverLap(closestLap);
+    } else {
+      setHoverLap(null);
+    }
+  };
+
+  const leftHoverPoint = hoverLap !== null ? leftSeries.find(p => p.lapNumber === hoverLap) : null;
+  const rightHoverPoint = hoverLap !== null ? rightSeries.find(p => p.lapNumber === hoverLap) : null;
+
   return (
     <section className="panel analysis-panel">
       <div className="analysis-panel__header">
@@ -50,7 +77,14 @@ export function StintPerformancePanel(props: {
       </div>
 
       <div className="long-run-chart">
-        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Stint pace chart">
+        <svg 
+          viewBox={`0 0 ${width} ${height}`} 
+          role="img" 
+          aria-label="Stint pace chart"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={() => setHoverLap(null)}
+          style={{ cursor: "crosshair" }}
+        >
           {Array.from({ length: 5 }).map((_, index) => {
             const ratio = index / 4;
             const y = padding.top + (height - padding.top - padding.bottom) * ratio;
@@ -129,22 +163,67 @@ export function StintPerformancePanel(props: {
             strokeLinejoin="round"
             strokeDasharray="8 6"
           />
+
+          {hoverLap !== null && (
+            <g style={{ pointerEvents: "none" }}>
+              <line
+                x1={mapX(hoverLap, width, padding, minLap, maxLap)}
+                y1={padding.top}
+                x2={mapX(hoverLap, width, padding, minLap, maxLap)}
+                y2={height - padding.bottom}
+                stroke="rgba(207,47,39,0.34)"
+                strokeWidth={2}
+                strokeDasharray="4 6"
+              />
+              <text
+                x={mapX(hoverLap, width, padding, minLap, maxLap)}
+                y={padding.top - 4}
+                textAnchor="middle"
+                fontSize="11"
+                fontWeight="bold"
+                fill="rgba(20,20,20,0.8)"
+              >
+                L{hoverLap}
+              </text>
+
+              {leftHoverPoint && (
+                <circle
+                  cx={mapX(hoverLap, width, padding, minLap, maxLap)}
+                  cy={mapY(leftHoverPoint.lapDuration, height, padding, minValue, maxValue)}
+                  r={5}
+                  fill={props.leftDriver.teamColour ? `#${props.leftDriver.teamColour}` : "#cf2f27"}
+                  stroke="#fff"
+                  strokeWidth={2}
+                />
+              )}
+              {rightHoverPoint && (
+                <circle
+                  cx={mapX(hoverLap, width, padding, minLap, maxLap)}
+                  cy={mapY(rightHoverPoint.lapDuration, height, padding, minValue, maxValue)}
+                  r={5}
+                  fill={props.rightDriver.teamColour ? `#${props.rightDriver.teamColour}` : "#1d4ed8"}
+                  stroke="#fff"
+                  strokeWidth={2}
+                />
+              )}
+            </g>
+          )}
         </svg>
       </div>
 
       <div className="legend">
         <span className="legend__item">
           <span className="legend__swatch" style={{ background: props.leftDriver.teamColour ? `#${props.leftDriver.teamColour}` : "#cf2f27" }} />
-          {props.leftDriver.acronym} clean laps
+          {props.leftDriver.acronym} clean laps {leftHoverPoint ? `(L${hoverLap}: ${formatLapTime(leftHoverPoint.lapDuration)}${leftHoverPoint.tyreCompound ? ` on ${leftHoverPoint.tyreCompound}` : ""}${leftHoverPoint.tyreAge !== null ? `, ${leftHoverPoint.tyreAge} laps old` : ""})` : ""}
         </span>
         <span className="legend__item">
           <span className="legend__swatch" style={{ background: props.rightDriver.teamColour ? `#${props.rightDriver.teamColour}` : "#1d4ed8" }} />
-          {props.rightDriver.acronym} clean laps
+          {props.rightDriver.acronym} clean laps {rightHoverPoint ? `(L${hoverLap}: ${formatLapTime(rightHoverPoint.lapDuration)}${rightHoverPoint.tyreCompound ? ` on ${rightHoverPoint.tyreCompound}` : ""}${rightHoverPoint.tyreAge !== null ? `, ${rightHoverPoint.tyreAge} laps old` : ""})` : ""}
         </span>
       </div>
 
       <p className="muted">
-        Each stint card shows the best clean lap, average clean lap, and degradation from the first clean lap of that stint to the last one.
+        Each stint card shows the best clean lap, average clean lap, and the pace trend (the difference between the first and last clean lap of the stint). A pace improvement on old tyres usually means the lap-time gained from burning fuel outweighed the time lost to tyre degradation.
       </p>
 
       <div className="stint-driver-grid">
@@ -164,7 +243,7 @@ export function StintPerformancePanel(props: {
                     Best {formatLapTime(stats.bestLap)} | Avg {formatLapTime(stats.averageLap)}
                   </p>
                   <p className="stint-card__stats">
-                    Degradation {formatSignedSeconds(stats.degradation)}
+                    Pace trend: {stats.degradation !== null ? (stats.degradation > 0 ? `Dropped off by ${stats.degradation.toFixed(3)} s` : `Improved by ${Math.abs(stats.degradation).toFixed(3)} s`) : "N/A"}
                   </p>
                 </div>
               );
@@ -188,7 +267,7 @@ export function StintPerformancePanel(props: {
                     Best {formatLapTime(stats.bestLap)} | Avg {formatLapTime(stats.averageLap)}
                   </p>
                   <p className="stint-card__stats">
-                    Degradation {formatSignedSeconds(stats.degradation)}
+                    Pace trend: {stats.degradation !== null ? (stats.degradation > 0 ? `Dropped off by ${stats.degradation.toFixed(3)} s` : `Improved by ${Math.abs(stats.degradation).toFixed(3)} s`) : "N/A"}
                   </p>
                 </div>
               );
@@ -226,7 +305,9 @@ function getCleanLapSeries(driver: DriverSessionSummary): CleanLapPoint[] {
     .filter((lap) => lap.lapDuration !== null && !lap.isPitOutLap && !lap.isPitLap)
     .map((lap) => ({
       lapNumber: lap.lapNumber,
-      lapDuration: lap.lapDuration as number
+      lapDuration: lap.lapDuration as number,
+      tyreCompound: lap.tyreCompound,
+      tyreAge: lap.tyreAge
     }));
 
   return cleanLaps.length > 0
@@ -235,7 +316,9 @@ function getCleanLapSeries(driver: DriverSessionSummary): CleanLapPoint[] {
         .filter((lap) => lap.lapDuration !== null)
         .map((lap) => ({
           lapNumber: lap.lapNumber,
-          lapDuration: lap.lapDuration as number
+          lapDuration: lap.lapDuration as number,
+          tyreCompound: lap.tyreCompound,
+          tyreAge: lap.tyreAge
         }));
 }
 

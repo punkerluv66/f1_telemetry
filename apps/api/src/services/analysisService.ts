@@ -632,7 +632,7 @@ function buildLapPayload(
       averageSpeedKph: round(average(alignedPoints.map((point) => point.speedKph))),
       averageThrottlePct: round(average(alignedPoints.map((point) => point.throttlePct))),
       peakBrakePct: round(Math.max(...alignedPoints.map((point) => point.brakePct))),
-      lapTimeMs: round(alignedPoints[alignedPoints.length - 1]?.timeOffsetMs ?? 0)
+      lapTimeMs: lap.lapDuration !== null ? Math.round(lap.lapDuration * 1000) : round(alignedPoints[alignedPoints.length - 1]?.timeOffsetMs ?? 0)
     },
     sectors: {
       sector1Ms: toMilliseconds(lap.durationSector1),
@@ -832,8 +832,8 @@ function buildEngineerReport(params: {
       deltaMs: round(Math.abs(corner.phaseDeltaMs)),
       note:
         corner.phaseDeltaMs < 0
-          ? `${params.targetLap.driver.acronym} gains ${formatDeltaMs(Math.abs(corner.phaseDeltaMs))} from entry to exit.`
-          : `${params.referenceLap.driver.acronym} gains ${formatDeltaMs(Math.abs(corner.phaseDeltaMs))} from entry to exit.`
+          ? `${params.targetLap.driver.acronym} gains ${formatDeltaMs(Math.abs(corner.phaseDeltaMs))} in ${corner.label}.`
+          : `${params.referenceLap.driver.acronym} gains ${formatDeltaMs(Math.abs(corner.phaseDeltaMs))} in ${corner.label}.`
     }));
   const tyreNotes = buildTyreNotes(params.referenceLap, params.targetLap);
   const brakeNotes = buildBrakeNotes(
@@ -1027,7 +1027,7 @@ function buildEngineerReportMarkdown(input: {
     "## Strongest Sectors",
     ...input.strongestSectors.map((item) => `- ${item.note}`),
     "",
-    "## Biggest Losses",
+    "## Biggest Time Swings",
     ...input.biggestLosses.map((item) => `- ${item.note}`),
     "",
     "## Tyre Notes",
@@ -1105,7 +1105,7 @@ function detectBrakingZones(points: AlignedPoint[]): BrakingZone[] {
     }
   }
 
-  return events.slice(0, 8);
+  return events;
 }
 
 function summarizeDelta(

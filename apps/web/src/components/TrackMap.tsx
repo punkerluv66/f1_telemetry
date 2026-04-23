@@ -1,8 +1,10 @@
+import { MouseEvent, useMemo } from "react";
 import type { ComparisonResponse } from "../types";
 
 export function TrackMap(props: {
   comparison: ComparisonResponse;
   hoverDistance: number | null;
+  onHover?: (distance: number | null) => void;
 }) {
   const width = 800;
   const height = 400;
@@ -68,6 +70,68 @@ export function TrackMap(props: {
     ? getHoverPoint(trackPoints, props.hoverDistance)
     : null;
 
+  const handleMouseMove = (event: MouseEvent<SVGSVGElement>) => {
+    if (!props.onHover) return;
+
+    const svg = event.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    
+    // Calculate mouse position in SVG coordinates
+    const scaleX = width / rect.width;
+    const scaleY = height / rect.height;
+    
+    const mouseX = (event.clientX - rect.left) * scaleX;
+    const mouseY = (event.clientY - rect.top) * scaleY;
+
+    // Find the closest point by Euclidean distance
+    let closest = trackPoints[0];
+    let minDistSq = Infinity;
+
+    for (const p of trackPoints) {
+      const px = mapX(p.x!);
+      const py = mapY(p.y!);
+      const distSq = (px - mouseX) ** 2 + (py - mouseY) ** 2;
+      
+      if (distSq < minDistSq) {
+        minDistSq = distSq;
+        closest = p;
+      }
+    }
+
+    // Only update if we are reasonably close to the track
+    if (minDistSq < 10000) { // roughly 100px radius
+      props.onHover(closest.distanceM);
+    }
+  };
+
+  const handleMouseLeave = () => {
+    if (props.onHover) {
+      props.onHover(null);
+    }
+  };
+
+  const sectorMarkers = useMemo(() => {
+    const sectorTimes = [
+      props.comparison.referenceLap.sectors.sector1Ms,
+      props.comparison.referenceLap.sectors.sector2Ms
+    ];
+    const cumulativeTimes: number[] = [];
+    let runningTime = 0;
+
+    for (const sectorTime of sectorTimes) {
+      if (sectorTime === null || sectorTime <= 0) break;
+      runningTime += sectorTime;
+      cumulativeTimes.push(runningTime);
+    }
+
+    return cumulativeTimes.map((timeOffsetMs, index) => {
+      const p = props.comparison.referenceLap.points.reduce((prev, curr) => {
+        return Math.abs(curr.timeOffsetMs - timeOffsetMs) < Math.abs(prev.timeOffsetMs - timeOffsetMs) ? curr : prev;
+      });
+      return { key: `sector-${index + 1}`, x: p.x, y: p.y, label: `S${index + 1}` };
+    }).filter(marker => marker.x !== null && marker.y !== null);
+  }, [props.comparison]);
+
   return (
     <article className="panel chart-card">
       <div className="chart-card__header">
@@ -77,7 +141,14 @@ export function TrackMap(props: {
         </div>
       </div>
       <div className="chart-card__plot" style={{ height: `${height}px`, display: "flex", justifyContent: "center" }}>
-        <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="100%">
+        <svg 
+          viewBox={`0 0 ${width} ${height}`} 
+          width="100%" 
+          height="100%"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          style={{ cursor: props.onHover ? "crosshair" : "default" }}
+        >
           <path
             d={pathD}
             fill="none"
@@ -94,6 +165,17 @@ export function TrackMap(props: {
             strokeLinecap="round"
             strokeLinejoin="round"
           />
+
+          {sectorMarkers.map(marker => {
+            const mx = mapX(marker.x!);
+            const my = mapY(marker.y!);
+            return (
+              <g key={marker.key}>
+                <circle cx={mx} cy={my} r={4} fill="#cf2f27" />
+                <text x={mx + 8} y={my + 4} fontSize="12" fill="#cf2f27" fontWeight="bold">{marker.label}</text>
+              </g>
+            );
+          })}
           
           {refHover && refHover.x !== null && refHover.y !== null ? (
             <circle
@@ -103,6 +185,7 @@ export function TrackMap(props: {
               fill="white"
               stroke="rgba(20,20,20,0.8)"
               strokeWidth={3}
+              style={{ pointerEvents: "none" }}
             />
           ) : null}
         </svg>

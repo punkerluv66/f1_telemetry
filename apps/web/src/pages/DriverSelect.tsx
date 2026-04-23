@@ -322,7 +322,7 @@ export function DriverSelect() {
               </article>
             </section>
 
-            <TrackMap comparison={deferredComparison} hoverDistance={hoverDistance} />
+            <TrackMap comparison={deferredComparison} hoverDistance={hoverDistance} onHover={setHoverDistance} />
 
             <section className="chart-grid">
               {chartDefinitions.map((definition) => {
@@ -356,23 +356,6 @@ export function DriverSelect() {
                       }
                     ];
 
-                const eventMarkerGroups = definition.key === "deltaMs"
-                  ? undefined
-                  : [
-                      {
-                        key: deferredComparison.referenceLap.driver.acronym,
-                        color: deferredComparison.referenceLap.driver.color,
-                        dashArray: "4 6",
-                        events: deferredComparison.referenceLap.events
-                      },
-                      {
-                        key: deferredComparison.targetLap.driver.acronym,
-                        color: deferredComparison.targetLap.driver.color,
-                        dashArray: "2 8",
-                        events: deferredComparison.targetLap.events
-                      }
-                    ];
-
                 const maxDistance = Math.max(
                   deferredComparison.referenceLap.points[deferredComparison.referenceLap.points.length - 1]?.distanceM ?? 0,
                   deferredComparison.targetLap.points[deferredComparison.targetLap.points.length - 1]?.distanceM ?? 0
@@ -389,7 +372,6 @@ export function DriverSelect() {
                     hoverDistance={hoverDistance}
                     onHover={setHoverDistance}
                     centerZero={"centerZero" in definition ? definition.centerZero : undefined}
-                    eventMarkerGroups={eventMarkerGroups}
                     guideMarkers={sectorGuideMarkers}
                   />
                 );
@@ -420,7 +402,7 @@ export function DriverSelect() {
                     onClick={() => setShowCornerAnalysis((current) => !current)}
                     aria-expanded={showCornerAnalysis}
                   >
-                    {showCornerAnalysis ? "Hide Corner Analysis" : "Open Corner Analysis"}
+                    {showCornerAnalysis ? "Hide Braking Points" : "Open Braking Points"}
                   </button>
                   <button
                     type="button"

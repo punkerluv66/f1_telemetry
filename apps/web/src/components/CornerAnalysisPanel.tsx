@@ -12,7 +12,7 @@ export function CornerAnalysisPanel(props: {
       <section className="panel analysis-panel">
         <div className="analysis-panel__header">
           <div>
-            <p className="hero__eyebrow">Corner Analysis</p>
+            <p className="hero__eyebrow">Braking Points</p>
             <h3 className="section-title">Braking-Zone Comparison</h3>
           </div>
         </div>
@@ -25,7 +25,7 @@ export function CornerAnalysisPanel(props: {
     <section className="panel analysis-panel">
       <div className="analysis-panel__header">
         <div>
-          <p className="hero__eyebrow">Corner Analysis</p>
+          <p className="hero__eyebrow">Braking Points</p>
           <h3 className="section-title">Braking-Zone Comparison</h3>
         </div>
         <div className="analysis-summary">
@@ -65,7 +65,7 @@ export function CornerAnalysisPanel(props: {
                 <div className="corner-driver corner-driver--reference">
                   <p className="corner-driver__label">{comparison.referenceLap.driver.acronym}</p>
                   <p className="corner-driver__stats">
-                    Entry {Math.round(corner.reference.entrySpeedKph)} | Apex {Math.round(corner.reference.apexSpeedKph)} | Exit {Math.round(corner.reference.exitSpeedKph)}
+                    Speed (km/h): Entry {Math.round(corner.reference.entrySpeedKph)} | Apex {Math.round(corner.reference.apexSpeedKph)} | Exit {Math.round(corner.reference.exitSpeedKph)}
                   </p>
                   <p className="corner-driver__meta">
                     Brake {Math.round(corner.reference.peakBrakePct)}% | Throttle exit {Math.round(corner.reference.throttleAtExitPct)}%
@@ -74,7 +74,7 @@ export function CornerAnalysisPanel(props: {
                 <div className="corner-driver corner-driver--target">
                   <p className="corner-driver__label">{comparison.targetLap.driver.acronym}</p>
                   <p className="corner-driver__stats">
-                    Entry {Math.round(corner.target.entrySpeedKph)} | Apex {Math.round(corner.target.apexSpeedKph)} | Exit {Math.round(corner.target.exitSpeedKph)}
+                    Speed (km/h): Entry {Math.round(corner.target.entrySpeedKph)} | Apex {Math.round(corner.target.apexSpeedKph)} | Exit {Math.round(corner.target.exitSpeedKph)}
                   </p>
                   <p className="corner-driver__meta">
                     Brake {Math.round(corner.target.peakBrakePct)}% | Throttle exit {Math.round(corner.target.throttleAtExitPct)}%

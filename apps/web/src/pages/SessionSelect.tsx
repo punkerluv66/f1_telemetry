@@ -99,7 +99,7 @@ export function SessionSelect() {
               <h3 className="section-title">OpenF1 F1 Results</h3>
               <p className="muted">Use a simple filter, then import the session you want to inspect.</p>
             </div>
-            <p className="muted">Showing up to 10 sessions</p>
+            <p className="muted">Showing {remoteSessions.length} sessions</p>
           </div>
 
           <div className="session-filter-bar">
@@ -136,7 +136,7 @@ export function SessionSelect() {
           </div>
 
           <div className="session-card-rail">
-            {remoteSessions.length > 0 ? remoteSessions.slice(0, 10).map((session) => (
+            {remoteSessions.length > 0 ? remoteSessions.map((session) => (
               <article className="panel panel--dark session-card" key={session.session_key}>
                 <div className="session-card__content">
                   <h3 className="session-card__title">{session.country_name}</h3>

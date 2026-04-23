@@ -65,7 +65,7 @@ export function EngineerReportPanel(props: {
         </article>
 
         <article className="report-card">
-          <h5>Biggest Losses</h5>
+          <h5>Biggest Time Swings</h5>
           <ul className="report-list">
             {comparison.report.biggestLosses.map((item) => (
               <li key={item.label}>{item.note}</li>
