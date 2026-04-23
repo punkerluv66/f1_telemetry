@@ -31,6 +31,60 @@ type NormalizedTelemetry = {
   firstSampleOffsetMs: number;
 };
 
+type BrakingZone = {
+  label: string;
+  startDistanceM: number;
+  peakDistanceM: number;
+  peakBrakePct: number;
+  throttlePickupM: number;
+};
+
+type LapPayload = {
+  id: number;
+  lapNumber: number;
+  lapDuration: number | null;
+  telemetryImportedAt: Date | null;
+  driver: {
+    id: number;
+    driverNumber: number;
+    acronym: string;
+    fullName: string;
+    teamName: string;
+    color: string;
+  };
+  summary: {
+    topSpeedKph: number;
+    averageSpeedKph: number;
+    averageThrottlePct: number;
+    peakBrakePct: number;
+    lapTimeMs: number;
+  };
+  sectors: {
+    sector1Ms: number | null;
+    sector2Ms: number | null;
+    sector3Ms: number | null;
+  };
+  tyre: {
+    compound: string | null;
+    age: number | null;
+    stint: number | null;
+  };
+  points: AlignedPoint[];
+  distance: {
+    rawLapLengthM: number;
+    normalizedLapLengthM: number;
+    scaleFactor: number;
+    firstSampleOffsetMs: number;
+  };
+  events: BrakingZone[];
+};
+
+type DeltaPoint = {
+  distanceM: number;
+  deltaMs: number;
+};
+
+const COMPARISON_PAYLOAD_VERSION = 3;
 const DISTANCE_NORMALIZATION_VERSION = 2;
 const DISTANCE_NORMALIZATION_MODE = "integrated-distance-scaled";
 
@@ -191,10 +245,32 @@ export async function compareLaps(params: {
     smoothingWindow: params.smoothingWindow,
     maxDistance: commonDistance
   });
-  const deltaPoints = referenceAligned.map((point, index) => ({
+  const deltaPoints: DeltaPoint[] = referenceAligned.map((point, index) => ({
     distanceM: point.distanceM,
     deltaMs: round(targetAligned[index].timeOffsetMs - point.timeOffsetMs)
   }));
+
+  const referencePayload = buildLapPayload(referenceLap, referenceAligned, normalizedReference);
+  const targetPayload = buildLapPayload(targetLap, targetAligned, normalizedTarget);
+  const sectorAnalysis = buildSectorAnalysis({
+    referenceLap,
+    targetLap,
+    referenceDriver: referencePayload.driver.acronym,
+    targetDriver: targetPayload.driver.acronym
+  });
+  const cornerAnalysis = buildCornerAnalysis({
+    referenceLap: referencePayload,
+    targetLap: targetPayload,
+    deltaPoints
+  });
+  const report = buildEngineerReport({
+    session: referenceLap.session,
+    referenceLap: referencePayload,
+    targetLap: targetPayload,
+    deltaPoints,
+    sectorAnalysis,
+    cornerAnalysis
+  });
 
   const payload = {
     session: {
@@ -208,15 +284,19 @@ export async function compareLaps(params: {
     settings: {
       distanceStep: params.distanceStep,
       smoothingWindow: params.smoothingWindow,
+      payloadVersion: COMPARISON_PAYLOAD_VERSION,
       normalizationMode: DISTANCE_NORMALIZATION_MODE,
       normalizationVersion: DISTANCE_NORMALIZATION_VERSION
     },
-    referenceLap: buildLapPayload(referenceLap, referenceAligned, normalizedReference),
-    targetLap: buildLapPayload(targetLap, targetAligned, normalizedTarget),
+    referenceLap: referencePayload,
+    targetLap: targetPayload,
     delta: {
       points: deltaPoints,
       summary: summarizeDelta(deltaPoints, referenceLap.id, targetLap.id)
-    }
+    },
+    sectorAnalysis,
+    cornerAnalysis,
+    report
   };
 
   await prisma.comparisonCache.upsert({
@@ -294,10 +374,7 @@ function buildTelemetryPoints(input: {
     previousCarTimestamp = timestampMs;
 
     const locationState = interpolateLocationState(locationTimeline, timestampMs);
-    const distanceM = Math.max(
-      previousComputedDistance,
-      integratedDistance
-    );
+    const distanceM = Math.max(previousComputedDistance, integratedDistance);
     previousComputedDistance = distanceM;
 
     points.push({
@@ -536,7 +613,7 @@ function buildLapPayload(
   },
   alignedPoints: AlignedPoint[],
   normalizedTelemetry: NormalizedTelemetry
-) {
+): LapPayload {
   return {
     id: lap.id,
     lapNumber: lap.lapNumber,
@@ -550,7 +627,6 @@ function buildLapPayload(
       teamName: lap.driver.teamName,
       color: lap.driver.teamColour ? `#${lap.driver.teamColour}` : "#1d4ed8"
     },
-    points: alignedPoints,
     summary: {
       topSpeedKph: round(Math.max(...alignedPoints.map((point) => point.speedKph))),
       averageSpeedKph: round(average(alignedPoints.map((point) => point.speedKph))),
@@ -558,6 +634,17 @@ function buildLapPayload(
       peakBrakePct: round(Math.max(...alignedPoints.map((point) => point.brakePct))),
       lapTimeMs: round(alignedPoints[alignedPoints.length - 1]?.timeOffsetMs ?? 0)
     },
+    sectors: {
+      sector1Ms: toMilliseconds(lap.durationSector1),
+      sector2Ms: toMilliseconds(lap.durationSector2),
+      sector3Ms: toMilliseconds(lap.durationSector3)
+    },
+    tyre: {
+      compound: lap.tyreCompound,
+      age: lap.tyreAge,
+      stint: lap.stint
+    },
+    points: alignedPoints,
     distance: {
       rawLapLengthM: normalizedTelemetry.rawLapLengthM,
       normalizedLapLengthM: normalizedTelemetry.normalizedLapLengthM,
@@ -586,23 +673,393 @@ function deduplicateComparablePoints(points: ComparablePoint[]) {
   return deduplicated;
 }
 
+function buildSectorAnalysis(params: {
+  referenceLap: Lap & {
+    driver: Driver;
+  };
+  targetLap: Lap & {
+    driver: Driver;
+  };
+  referenceDriver: string;
+  targetDriver: string;
+}) {
+  const sectors = [
+    {
+      label: "Sector 1",
+      referenceMs: toMilliseconds(params.referenceLap.durationSector1),
+      targetMs: toMilliseconds(params.targetLap.durationSector1)
+    },
+    {
+      label: "Sector 2",
+      referenceMs: toMilliseconds(params.referenceLap.durationSector2),
+      targetMs: toMilliseconds(params.targetLap.durationSector2)
+    },
+    {
+      label: "Sector 3",
+      referenceMs: toMilliseconds(params.referenceLap.durationSector3),
+      targetMs: toMilliseconds(params.targetLap.durationSector3)
+    }
+  ].map((sector) => {
+    const deltaMs =
+      sector.referenceMs === null || sector.targetMs === null
+        ? null
+        : round(sector.targetMs - sector.referenceMs);
+
+    return {
+      ...sector,
+      deltaMs,
+      winner:
+        deltaMs === null
+          ? "unavailable"
+          : deltaMs < -0.5
+            ? params.targetDriver
+            : deltaMs > 0.5
+              ? params.referenceDriver
+              : "Even"
+    };
+  });
+
+  const strongestSector = [...sectors]
+    .filter((sector) => sector.deltaMs !== null)
+    .sort((left, right) => Math.abs(right.deltaMs ?? 0) - Math.abs(left.deltaMs ?? 0))[0] ?? null;
+
+  return {
+    sectors,
+    summary: {
+      strongestSectorLabel: strongestSector?.label ?? null,
+      strongestSectorWinner: strongestSector?.winner ?? null,
+      strongestSectorDeltaMs: strongestSector?.deltaMs ?? null,
+      targetBetterCount: sectors.filter((sector) => sector.winner === params.targetDriver).length,
+      referenceBetterCount: sectors.filter((sector) => sector.winner === params.referenceDriver).length
+    }
+  };
+}
+
+function buildCornerAnalysis(params: {
+  referenceLap: LapPayload;
+  targetLap: LapPayload;
+  deltaPoints: DeltaPoint[];
+}) {
+  const mergedCorners = mergeCornerEvents(params.referenceLap.events, params.targetLap.events);
+  const corners = mergedCorners.map((corner, index) => {
+    const referenceMetrics = summarizeCornerWindow(
+      params.referenceLap.points,
+      corner.entryDistanceM,
+      corner.peakDistanceM,
+      corner.exitDistanceM
+    );
+    const targetMetrics = summarizeCornerWindow(
+      params.targetLap.points,
+      corner.entryDistanceM,
+      corner.peakDistanceM,
+      corner.exitDistanceM
+    );
+    const entryDeltaMs = sampleDeltaAtDistance(params.deltaPoints, corner.entryDistanceM);
+    const apexDeltaMs = sampleDeltaAtDistance(params.deltaPoints, corner.peakDistanceM);
+    const exitDeltaMs = sampleDeltaAtDistance(params.deltaPoints, corner.exitDistanceM);
+    const phaseDeltaMs = round(exitDeltaMs - entryDeltaMs);
+    const fasterDriver =
+      phaseDeltaMs < -15
+        ? params.targetLap.driver.acronym
+        : phaseDeltaMs > 15
+          ? params.referenceLap.driver.acronym
+          : "Even";
+
+    return {
+      key: `corner-${index + 1}`,
+      label: `Corner ${index + 1}`,
+      distanceM: corner.peakDistanceM,
+      entryDistanceM: corner.entryDistanceM,
+      exitDistanceM: corner.exitDistanceM,
+      reference: referenceMetrics,
+      target: targetMetrics,
+      entryDeltaMs,
+      apexDeltaMs,
+      exitDeltaMs,
+      phaseDeltaMs,
+      fasterDriver
+    };
+  });
+
+  const biggestTargetGain = [...corners].sort((left, right) => left.phaseDeltaMs - right.phaseDeltaMs)[0] ?? null;
+  const biggestReferenceGain = [...corners].sort((left, right) => right.phaseDeltaMs - left.phaseDeltaMs)[0] ?? null;
+
+  return {
+    corners,
+    summary: {
+      targetBetterCorners: corners.filter((corner) => corner.fasterDriver === params.targetLap.driver.acronym).length,
+      referenceBetterCorners: corners.filter((corner) => corner.fasterDriver === params.referenceLap.driver.acronym).length,
+      biggestTargetGainLabel: biggestTargetGain && biggestTargetGain.phaseDeltaMs < 0 ? biggestTargetGain.label : null,
+      biggestTargetGainMs: biggestTargetGain && biggestTargetGain.phaseDeltaMs < 0 ? biggestTargetGain.phaseDeltaMs : null,
+      biggestReferenceGainLabel: biggestReferenceGain && biggestReferenceGain.phaseDeltaMs > 0 ? biggestReferenceGain.label : null,
+      biggestReferenceGainMs: biggestReferenceGain && biggestReferenceGain.phaseDeltaMs > 0 ? biggestReferenceGain.phaseDeltaMs : null
+    }
+  };
+}
+
+function buildEngineerReport(params: {
+  session: Session;
+  referenceLap: LapPayload;
+  targetLap: LapPayload;
+  deltaPoints: DeltaPoint[];
+  sectorAnalysis: ReturnType<typeof buildSectorAnalysis>;
+  cornerAnalysis: ReturnType<typeof buildCornerAnalysis>;
+}) {
+  const finalDeltaMs = params.deltaPoints[params.deltaPoints.length - 1]?.deltaMs ?? 0;
+  const winner =
+    finalDeltaMs < 0 ? params.targetLap.driver.acronym : params.referenceLap.driver.acronym;
+  const winnerMarginMs = Math.abs(finalDeltaMs);
+  const strongestSectors = [...params.sectorAnalysis.sectors]
+    .filter((sector) => sector.deltaMs !== null)
+    .sort((left, right) => Math.abs(right.deltaMs ?? 0) - Math.abs(left.deltaMs ?? 0))
+    .slice(0, 3)
+    .map((sector) => ({
+      label: sector.label,
+      winner: sector.winner,
+      deltaMs: sector.deltaMs ?? 0,
+      note:
+        sector.winner === "Even"
+          ? `${sector.label} is effectively matched between both laps.`
+          : `${sector.winner} is quicker in ${sector.label} by ${formatDeltaMs(Math.abs(sector.deltaMs ?? 0))}.`
+    }));
+  const biggestLosses = [...params.cornerAnalysis.corners]
+    .sort((left, right) => Math.abs(right.phaseDeltaMs) - Math.abs(left.phaseDeltaMs))
+    .slice(0, 3)
+    .map((corner) => ({
+      label: corner.label,
+      owner:
+        corner.phaseDeltaMs < 0 ? params.referenceLap.driver.acronym : params.targetLap.driver.acronym,
+      deltaMs: round(Math.abs(corner.phaseDeltaMs)),
+      note:
+        corner.phaseDeltaMs < 0
+          ? `${params.targetLap.driver.acronym} gains ${formatDeltaMs(Math.abs(corner.phaseDeltaMs))} from entry to exit.`
+          : `${params.referenceLap.driver.acronym} gains ${formatDeltaMs(Math.abs(corner.phaseDeltaMs))} from entry to exit.`
+    }));
+  const tyreNotes = buildTyreNotes(params.referenceLap, params.targetLap);
+  const brakeNotes = buildBrakeNotes(
+    params.cornerAnalysis,
+    params.referenceLap.driver.acronym,
+    params.targetLap.driver.acronym
+  );
+  const summary = [
+    `${winner} finishes this comparison ${formatDeltaMs(winnerMarginMs)} ahead over the full lap.`,
+    `${params.targetLap.driver.acronym} is better in ${params.cornerAnalysis.summary.targetBetterCorners} braking zones, ${params.referenceLap.driver.acronym} in ${params.cornerAnalysis.summary.referenceBetterCorners}.`,
+    params.sectorAnalysis.summary.strongestSectorLabel && params.sectorAnalysis.summary.strongestSectorWinner
+      ? `${params.sectorAnalysis.summary.strongestSectorLabel} is the biggest swing for ${params.sectorAnalysis.summary.strongestSectorWinner}.`
+      : "Sector deltas are too close to call cleanly.",
+    tyreNotes[0] ?? "Tyre metadata is limited for one or both laps."
+  ];
+  const headline = `${winner} holds the lap advantage in ${params.session.year} ${params.session.countryName} ${params.session.sessionName}.`;
+  const exportMarkdown = buildEngineerReportMarkdown({
+    headline,
+    session: params.session,
+    referenceLap: params.referenceLap,
+    targetLap: params.targetLap,
+    finalDeltaMs,
+    summary,
+    strongestSectors,
+    biggestLosses,
+    tyreNotes,
+    brakeNotes
+  });
+
+  return {
+    headline,
+    summary,
+    strongestSectors,
+    biggestLosses,
+    tyreNotes,
+    brakeNotes,
+    exportMarkdown
+  };
+}
+
+function mergeCornerEvents(referenceEvents: BrakingZone[], targetEvents: BrakingZone[]) {
+  const allEvents = [
+    ...referenceEvents.map((event) => ({ ...event, source: "reference" })),
+    ...targetEvents.map((event) => ({ ...event, source: "target" }))
+  ].sort((left, right) => left.peakDistanceM - right.peakDistanceM);
+  const merged: Array<{
+    peakDistanceM: number;
+    entryDistanceM: number;
+    exitDistanceM: number;
+    members: Array<typeof allEvents[number]>;
+  }> = [];
+
+  for (const event of allEvents) {
+    const current = merged[merged.length - 1];
+
+    if (current && Math.abs(current.peakDistanceM - event.peakDistanceM) <= 140) {
+      current.members.push(event);
+      current.peakDistanceM = round(average(current.members.map((member) => member.peakDistanceM)));
+      current.entryDistanceM = round(Math.min(current.entryDistanceM, event.startDistanceM));
+      current.exitDistanceM = round(Math.max(current.exitDistanceM, event.throttlePickupM));
+      continue;
+    }
+
+    merged.push({
+      peakDistanceM: event.peakDistanceM,
+      entryDistanceM: event.startDistanceM,
+      exitDistanceM: event.throttlePickupM,
+      members: [event]
+    });
+  }
+
+  return merged;
+}
+
+function summarizeCornerWindow(
+  points: AlignedPoint[],
+  entryDistanceM: number,
+  peakDistanceM: number,
+  exitDistanceM: number
+) {
+  const segment = points.filter(
+    (point) => point.distanceM >= entryDistanceM && point.distanceM <= exitDistanceM
+  );
+  const fallbackSegment = segment.length > 0 ? segment : points;
+  const entryPoint = findClosestPointByDistance(points, entryDistanceM);
+  const apexPoint = [...fallbackSegment].sort((left, right) => left.speedKph - right.speedKph)[0] ?? entryPoint;
+  const exitPoint = findClosestPointByDistance(points, exitDistanceM);
+
+  return {
+    entrySpeedKph: round(entryPoint.speedKph),
+    apexSpeedKph: round(apexPoint.speedKph),
+    exitSpeedKph: round(exitPoint.speedKph),
+    peakBrakePct: round(Math.max(...fallbackSegment.map((point) => point.brakePct))),
+    throttleAtExitPct: round(exitPoint.throttlePct),
+    apexDistanceM: round(apexPoint.distanceM),
+    peakDistanceM: round(peakDistanceM)
+  };
+}
+
+function sampleDeltaAtDistance(deltaPoints: DeltaPoint[], distanceM: number) {
+  return round(findClosestDeltaPoint(deltaPoints, distanceM).deltaMs);
+}
+
+function buildTyreNotes(referenceLap: LapPayload, targetLap: LapPayload) {
+  const notes = [
+    `${referenceLap.driver.acronym}: ${formatTyreLabel(referenceLap.tyre)}.`,
+    `${targetLap.driver.acronym}: ${formatTyreLabel(targetLap.tyre)}.`
+  ];
+  const compoundGap =
+    referenceLap.tyre.compound && targetLap.tyre.compound && referenceLap.tyre.compound !== targetLap.tyre.compound
+      ? `Compound split: ${referenceLap.driver.acronym} on ${referenceLap.tyre.compound}, ${targetLap.driver.acronym} on ${targetLap.tyre.compound}.`
+      : null;
+  const ageGap =
+    referenceLap.tyre.age !== null && targetLap.tyre.age !== null
+      ? `${Math.abs(referenceLap.tyre.age - targetLap.tyre.age)} lap tyre-age gap between the selected laps.`
+      : null;
+
+  return [...notes, compoundGap, ageGap].filter((note): note is string => Boolean(note));
+}
+
+function buildBrakeNotes(
+  cornerAnalysis: ReturnType<typeof buildCornerAnalysis>,
+  referenceDriver: string,
+  targetDriver: string
+) {
+  if (cornerAnalysis.corners.length === 0) {
+    return ["Not enough braking windows to extract notes."];
+  }
+
+  const biggestBrakeGap = [...cornerAnalysis.corners].sort((left, right) => {
+    const leftGap = Math.abs(left.reference.peakBrakePct - left.target.peakBrakePct);
+    const rightGap = Math.abs(right.reference.peakBrakePct - right.target.peakBrakePct);
+    return rightGap - leftGap;
+  })[0];
+  const biggestExitGap = [...cornerAnalysis.corners].sort((left, right) => {
+    const leftGap = Math.abs(left.reference.exitSpeedKph - left.target.exitSpeedKph);
+    const rightGap = Math.abs(right.reference.exitSpeedKph - right.target.exitSpeedKph);
+    return rightGap - leftGap;
+  })[0];
+
+  const brakeLeader =
+    biggestBrakeGap.reference.peakBrakePct > biggestBrakeGap.target.peakBrakePct ? referenceDriver : targetDriver;
+  const exitLeader =
+    biggestExitGap.reference.exitSpeedKph > biggestExitGap.target.exitSpeedKph ? referenceDriver : targetDriver;
+
+  return [
+    `${brakeLeader} shows the heavier brake peak in ${biggestBrakeGap.label}.`,
+    `${exitLeader} carries the stronger exit speed in ${biggestExitGap.label}.`,
+    cornerAnalysis.summary.biggestTargetGainLabel
+      ? `${targetDriver}'s best corner phase is ${cornerAnalysis.summary.biggestTargetGainLabel}.`
+      : `${targetDriver} does not show a decisive corner-phase gain.`,
+    cornerAnalysis.summary.biggestReferenceGainLabel
+      ? `${referenceDriver}'s best corner phase is ${cornerAnalysis.summary.biggestReferenceGainLabel}.`
+      : `${referenceDriver} does not show a decisive corner-phase gain.`
+  ];
+}
+
+function buildEngineerReportMarkdown(input: {
+  headline: string;
+  session: Session;
+  referenceLap: LapPayload;
+  targetLap: LapPayload;
+  finalDeltaMs: number;
+  summary: string[];
+  strongestSectors: Array<{
+    label: string;
+    winner: string;
+    deltaMs: number;
+    note: string;
+  }>;
+  biggestLosses: Array<{
+    label: string;
+    owner: string;
+    deltaMs: number;
+    note: string;
+  }>;
+  tyreNotes: string[];
+  brakeNotes: string[];
+}) {
+  return [
+    `# ${input.headline}`,
+    "",
+    `Session: ${input.session.year} ${input.session.countryName} ${input.session.sessionName}`,
+    `Reference lap: ${input.referenceLap.driver.acronym} L${input.referenceLap.lapNumber} (${formatLapTimeSeconds(input.referenceLap.lapDuration)})`,
+    `Target lap: ${input.targetLap.driver.acronym} L${input.targetLap.lapNumber} (${formatLapTimeSeconds(input.targetLap.lapDuration)})`,
+    `Final delta: ${formatSignedMilliseconds(input.finalDeltaMs)}`,
+    "",
+    "## Summary",
+    ...input.summary.map((line) => `- ${line}`),
+    "",
+    "## Strongest Sectors",
+    ...input.strongestSectors.map((item) => `- ${item.note}`),
+    "",
+    "## Biggest Losses",
+    ...input.biggestLosses.map((item) => `- ${item.note}`),
+    "",
+    "## Tyre Notes",
+    ...input.tyreNotes.map((line) => `- ${line}`),
+    "",
+    "## Brake Notes",
+    ...input.brakeNotes.map((line) => `- ${line}`)
+  ].join("\n");
+}
+
 function isComparisonCacheCompatible(payload: unknown) {
   if (typeof payload !== "object" || payload === null || !("settings" in payload)) {
     return false;
   }
 
-  const settings = (payload as { settings?: { normalizationVersion?: unknown } }).settings;
-  return settings?.normalizationVersion === DISTANCE_NORMALIZATION_VERSION;
+  const settings = (
+    payload as {
+      settings?: {
+        normalizationVersion?: unknown;
+        payloadVersion?: unknown;
+      };
+    }
+  ).settings;
+
+  return (
+    settings?.normalizationVersion === DISTANCE_NORMALIZATION_VERSION &&
+    settings?.payloadVersion === COMPARISON_PAYLOAD_VERSION
+  );
 }
 
-function detectBrakingZones(points: AlignedPoint[]) {
-  const events: Array<{
-    label: string;
-    startDistanceM: number;
-    peakDistanceM: number;
-    peakBrakePct: number;
-    throttlePickupM: number;
-  }> = [];
+function detectBrakingZones(points: AlignedPoint[]): BrakingZone[] {
+  const events: BrakingZone[] = [];
 
   let current:
     | {
@@ -652,10 +1109,7 @@ function detectBrakingZones(points: AlignedPoint[]) {
 }
 
 function summarizeDelta(
-  deltaPoints: Array<{
-    distanceM: number;
-    deltaMs: number;
-  }>,
+  deltaPoints: DeltaPoint[],
   referenceLapId: number,
   targetLapId: number
 ) {
@@ -673,6 +1127,70 @@ function summarizeDelta(
 
 function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+}
+
+function toMilliseconds(seconds: number | null) {
+  return seconds === null ? null : round(seconds * 1000);
+}
+
+function findClosestPointByDistance(points: AlignedPoint[], distanceM: number) {
+  let closest = points[0];
+  let gap = Math.abs(points[0].distanceM - distanceM);
+
+  for (let index = 1; index < points.length; index += 1) {
+    const candidateGap = Math.abs(points[index].distanceM - distanceM);
+
+    if (candidateGap < gap) {
+      closest = points[index];
+      gap = candidateGap;
+    }
+  }
+
+  return closest;
+}
+
+function findClosestDeltaPoint(points: DeltaPoint[], distanceM: number) {
+  let closest = points[0];
+  let gap = Math.abs(points[0].distanceM - distanceM);
+
+  for (let index = 1; index < points.length; index += 1) {
+    const candidateGap = Math.abs(points[index].distanceM - distanceM);
+
+    if (candidateGap < gap) {
+      closest = points[index];
+      gap = candidateGap;
+    }
+  }
+
+  return closest;
+}
+
+function formatTyreLabel(tyre: LapPayload["tyre"]) {
+  const compound = tyre.compound ?? "unknown compound";
+  const age = tyre.age !== null ? `${tyre.age} laps old` : "age unknown";
+  const stint = tyre.stint !== null ? `stint ${tyre.stint}` : "stint unknown";
+  return `${compound}, ${age}, ${stint}`;
+}
+
+function formatDeltaMs(deltaMs: number) {
+  return `${(deltaMs / 1000).toFixed(3)} s`;
+}
+
+function formatSignedMilliseconds(deltaMs: number) {
+  return `${deltaMs > 0 ? "+" : ""}${(deltaMs / 1000).toFixed(3)} s`;
+}
+
+function formatLapTimeSeconds(seconds: number | null) {
+  if (seconds === null) {
+    return "N/A";
+  }
+
+  const totalMilliseconds = Math.round(seconds * 1000);
+  const minutes = Math.floor(totalMilliseconds / 60_000);
+  const remainingSeconds = Math.floor((totalMilliseconds % 60_000) / 1000);
+  const milliseconds = totalMilliseconds % 1000;
+
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
 
 function compareByDate(left: { date: string }, right: { date: string }) {

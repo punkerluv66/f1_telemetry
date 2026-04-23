@@ -1,8 +1,11 @@
 import { startTransition, useDeferredValue, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ChartCard } from "../components/ChartCard";
+import { CornerAnalysisPanel } from "../components/CornerAnalysisPanel";
 import { TrackMap } from "../components/TrackMap";
 import { DriverSummaryCard } from "../components/DriverSummaryCard";
+import { EngineerReportPanel } from "../components/EngineerReportPanel";
+import { StintPerformancePanel } from "../components/StintPerformancePanel";
 import { compareLaps, getSessionOverview } from "../lib/api";
 import { formatDelta, formatMsAsLapTime } from "../lib/formatters";
 import { getDriverById, getErrorMessage, getPreferredLapId, formatLapOption } from "../lib/helpers";
@@ -53,6 +56,9 @@ export function DriverSelect() {
   const [error, setError] = useState<string | null>(null);
   const [loadingOverview, setLoadingOverview] = useState(false);
   const [loadingCompare, setLoadingCompare] = useState(false);
+  const [showLongRun, setShowLongRun] = useState(false);
+  const [showCornerAnalysis, setShowCornerAnalysis] = useState(false);
+  const [showEngineerReport, setShowEngineerReport] = useState(false);
 
   const deferredComparison = useDeferredValue(comparison);
 
@@ -99,6 +105,12 @@ export function DriverSelect() {
     setComparison(null);
     setHoverDistance(null);
   }, [overview, leftDriverId, rightDriverId]);
+
+  useEffect(() => {
+    setShowLongRun(false);
+    setShowCornerAnalysis(false);
+    setShowEngineerReport(false);
+  }, [leftDriverId, rightDriverId, leftLapId, rightLapId, comparison?.referenceLap.id, comparison?.targetLap.id]);
 
   async function loadOverview(id: number) {
     try {
@@ -148,6 +160,7 @@ export function DriverSelect() {
   const rightDriver = overview ? getDriverById(overview, rightDriverId) : null;
   const leftLapOptions = leftDriver?.laps.filter((lap) => lap.lapDuration !== null) ?? [];
   const rightLapOptions = rightDriver?.laps.filter((lap) => lap.lapDuration !== null) ?? [];
+  const sectorGuideMarkers = deferredComparison ? buildSectorGuideMarkers(deferredComparison) : [];
 
   return (
     <div className="shell shell--full">
@@ -216,79 +229,80 @@ export function DriverSelect() {
         </section>
 
         {leftDriver && rightDriver ? (
-          <section className="panel lap-panel">
-            <div className="lap-panel__header">
-              <div>
-                <p className="hero__eyebrow">Lap Selection</p>
-                <h3 className="section-title">Select Laps to Analyze</h3>
+          <>
+            <section className="panel lap-panel">
+              <div className="lap-panel__header">
+                <div>
+                  <p className="hero__eyebrow">Lap Selection</p>
+                  <h3 className="section-title">Select Laps to Analyze</h3>
+                </div>
               </div>
-            </div>
-            <div className="lap-picker-grid">
-              <div className="field">
-                <label>{leftDriver.acronym} lap</label>
-                <select value={leftLapId ?? ""} onChange={(event) => setLeftLapId(Number(event.target.value))}>
-                  {leftLapOptions.map((lap) => (
-                    <option
-                      key={lap.id}
-                      value={lap.id}
-                      style={lap.lapDuration === leftDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
-                    >
-                      {lap.lapDuration === leftDriver.stats.bestLapSeconds ? "* " : ""}
-                      {formatLapOption(lap)}
-                    </option>
-                  ))}
-                </select>
+              <div className="lap-picker-grid">
+                <div className="field">
+                  <label>{leftDriver.acronym} lap</label>
+                  <select value={leftLapId ?? ""} onChange={(event) => setLeftLapId(Number(event.target.value))}>
+                    {leftLapOptions.map((lap) => (
+                      <option
+                        key={lap.id}
+                        value={lap.id}
+                        style={lap.lapDuration === leftDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
+                      >
+                        {lap.lapDuration === leftDriver.stats.bestLapSeconds ? "* " : ""}
+                        {formatLapOption(lap)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>{rightDriver.acronym} lap</label>
+                  <select value={rightLapId ?? ""} onChange={(event) => setRightLapId(Number(event.target.value))}>
+                    {rightLapOptions.map((lap) => (
+                      <option
+                        key={lap.id}
+                        value={lap.id}
+                        style={lap.lapDuration === rightDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
+                      >
+                        {lap.lapDuration === rightDriver.stats.bestLapSeconds ? "* " : ""}
+                        {formatLapOption(lap)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Distance step (m)</label>
+                  <input
+                    type="number"
+                    value={distanceStep}
+                    onChange={(event) => setDistanceStep(Number(event.target.value))}
+                    min={5}
+                    max={100}
+                    step={5}
+                  />
+                </div>
+                <div className="field">
+                  <label>Smoothing window</label>
+                  <input
+                    type="number"
+                    value={smoothingWindow}
+                    onChange={(event) => setSmoothingWindow(Number(event.target.value))}
+                    min={1}
+                    max={21}
+                    step={2}
+                  />
+                </div>
               </div>
-              <div className="field">
-                <label>{rightDriver.acronym} lap</label>
-                <select value={rightLapId ?? ""} onChange={(event) => setRightLapId(Number(event.target.value))}>
-                  {rightLapOptions.map((lap) => (
-                    <option
-                      key={lap.id}
-                      value={lap.id}
-                      style={lap.lapDuration === rightDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
-                    >
-                      {lap.lapDuration === rightDriver.stats.bestLapSeconds ? "* " : ""}
-                      {formatLapOption(lap)}
-                    </option>
-                  ))}
-                </select>
+              <div className="lap-panel__actions">
+                <button type="button" onClick={() => void handleCompare()} disabled={loadingCompare || !leftLapId || !rightLapId}>
+                  {loadingCompare ? "Analyzing..." : "Compare Selected Laps"}
+                </button>
               </div>
-              <div className="field">
-                <label>Distance step (m)</label>
-                <input
-                  type="number"
-                  value={distanceStep}
-                  onChange={(event) => setDistanceStep(Number(event.target.value))}
-                  min={5}
-                  max={100}
-                  step={5}
-                />
-              </div>
-              <div className="field">
-                <label>Smoothing window</label>
-                <input
-                  type="number"
-                  value={smoothingWindow}
-                  onChange={(event) => setSmoothingWindow(Number(event.target.value))}
-                  min={1}
-                  max={21}
-                  step={2}
-                />
-              </div>
-            </div>
-            <div className="lap-panel__actions">
-              <button type="button" onClick={() => void handleCompare()} disabled={loadingCompare || !leftLapId || !rightLapId}>
-                {loadingCompare ? "Analyzing..." : "Compare Selected Laps"}
-              </button>
-            </div>
-          </section>
+            </section>
+
+          </>
         ) : null}
 
         {deferredComparison ? (
           <>
-            <TrackMap comparison={deferredComparison} hoverDistance={hoverDistance} />
-
             <section className="kpi-grid">
               <article className="panel kpi-card">
                 <p className="kpi-card__label">{deferredComparison.referenceLap.driver.acronym} lap time</p>
@@ -307,6 +321,8 @@ export function DriverSelect() {
                 <p className="kpi-card__value">{deferredComparison.targetLap.events.length}</p>
               </article>
             </section>
+
+            <TrackMap comparison={deferredComparison} hoverDistance={hoverDistance} />
 
             <section className="chart-grid">
               {chartDefinitions.map((definition) => {
@@ -374,13 +390,125 @@ export function DriverSelect() {
                     onHover={setHoverDistance}
                     centerZero={"centerZero" in definition ? definition.centerZero : undefined}
                     eventMarkerGroups={eventMarkerGroups}
+                    guideMarkers={sectorGuideMarkers}
                   />
                 );
               })}
             </section>
+
+            <section className="panel analysis-panel analysis-drawer">
+              <div className="analysis-panel__header">
+                <div>
+                  <p className="hero__eyebrow">Additional Analysis</p>
+                  <h3 className="section-title">Deep-Dive Tools</h3>
+                  <p className="lap-panel__text">
+                    Core lap comparison stays at the top. Open the deeper race-engineering views only when you need more context.
+                  </p>
+                </div>
+                <div className="analysis-toggle-bar">
+                  <button
+                    type="button"
+                    className={`button-secondary analysis-toggle${showLongRun ? " is-active" : ""}`}
+                    onClick={() => setShowLongRun((current) => !current)}
+                    aria-expanded={showLongRun}
+                  >
+                    {showLongRun ? "Hide Long-Run View" : "Open Long-Run View"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`button-secondary analysis-toggle${showCornerAnalysis ? " is-active" : ""}`}
+                    onClick={() => setShowCornerAnalysis((current) => !current)}
+                    aria-expanded={showCornerAnalysis}
+                  >
+                    {showCornerAnalysis ? "Hide Corner Analysis" : "Open Corner Analysis"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`button-secondary analysis-toggle${showEngineerReport ? " is-active" : ""}`}
+                    onClick={() => setShowEngineerReport((current) => !current)}
+                    aria-expanded={showEngineerReport}
+                  >
+                    {showEngineerReport ? "Hide Engineer Report" : "Open Engineer Report"}
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {showLongRun && leftDriver && rightDriver ? (
+              <StintPerformancePanel leftDriver={leftDriver} rightDriver={rightDriver} />
+            ) : null}
+            {showCornerAnalysis ? <CornerAnalysisPanel comparison={deferredComparison} /> : null}
+            {showEngineerReport ? <EngineerReportPanel comparison={deferredComparison} /> : null}
           </>
         ) : null}
       </main>
     </div>
   );
+}
+
+function buildSectorGuideMarkers(comparison: ComparisonResponse) {
+  const sectorTimes = [
+    comparison.referenceLap.sectors.sector1Ms,
+    comparison.referenceLap.sectors.sector2Ms
+  ];
+  const cumulativeTimes: number[] = [];
+  let runningTime = 0;
+
+  for (const sectorTime of sectorTimes) {
+    if (sectorTime === null || sectorTime <= 0) {
+      break;
+    }
+
+    runningTime += sectorTime;
+    cumulativeTimes.push(runningTime);
+  }
+
+  return cumulativeTimes.map((timeOffsetMs, index) => {
+    const point = findPointByTimeOffset(comparison.referenceLap.points, timeOffsetMs);
+
+    return {
+      key: `sector-${index + 1}`,
+      label: `S${index + 1}`,
+      distanceM: point.distanceM,
+      color: "rgba(20,20,20,0.34)",
+      dashArray: "10 8"
+    };
+  });
+}
+
+function findPointByTimeOffset(points: ComparisonResponse["referenceLap"]["points"], timeOffsetMs: number) {
+  if (points.length === 0) {
+    return {
+      distanceM: 0,
+      timeOffsetMs: 0
+    };
+  }
+
+  if (timeOffsetMs <= points[0].timeOffsetMs) {
+    return points[0];
+  }
+
+  if (timeOffsetMs >= points[points.length - 1].timeOffsetMs) {
+    return points[points.length - 1];
+  }
+
+  for (let index = 1; index < points.length; index += 1) {
+    const left = points[index - 1];
+    const right = points[index];
+
+    if (right.timeOffsetMs < timeOffsetMs) {
+      continue;
+    }
+
+    const span = Math.max(right.timeOffsetMs - left.timeOffsetMs, 1);
+    const ratio = (timeOffsetMs - left.timeOffsetMs) / span;
+
+    return {
+      ...right,
+      distanceM: left.distanceM + (right.distanceM - left.distanceM) * ratio,
+      timeOffsetMs
+    };
+  }
+
+  return points[points.length - 1];
 }

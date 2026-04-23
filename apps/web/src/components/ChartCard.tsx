@@ -22,6 +22,14 @@ type EventMarkerGroup = {
   events: EventMarker[];
 };
 
+type GuideMarker = {
+  key: string;
+  label: string;
+  distanceM: number;
+  color?: string;
+  dashArray?: string;
+};
+
 type ChartCardProps = {
   title: string;
   subtitle: string;
@@ -32,6 +40,7 @@ type ChartCardProps = {
   onHover: (distance: number | null) => void;
   centerZero?: boolean;
   eventMarkerGroups?: EventMarkerGroup[];
+  guideMarkers?: GuideMarker[];
 };
 
 export function ChartCard(props: ChartCardProps) {
@@ -111,6 +120,34 @@ export function ChartCard(props: ChartCardProps) {
                   fontSize="11"
                 >
                   {Math.round(labelValue)}
+                </text>
+              </g>
+            );
+          })}
+
+          {props.guideMarkers?.map((marker) => {
+            const x = mapDistance(marker.distanceM, width, padding, props.maxDistance);
+
+            return (
+              <g key={marker.key}>
+                <line
+                  x1={x}
+                  y1={padding.top}
+                  x2={x}
+                  y2={height - padding.bottom}
+                  stroke={marker.color ?? "rgba(20,20,20,0.36)"}
+                  strokeWidth={2}
+                  strokeDasharray={marker.dashArray ?? "10 8"}
+                />
+                <text
+                  x={clamp(x, padding.left + 20, width - padding.right - 20)}
+                  y={padding.top - 6}
+                  textAnchor="middle"
+                  fill="rgba(20,20,20,0.62)"
+                  fontSize="11"
+                  fontWeight="700"
+                >
+                  {marker.label}
                 </text>
               </g>
             );

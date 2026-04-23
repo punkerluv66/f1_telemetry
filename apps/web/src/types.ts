@@ -129,6 +129,25 @@ export interface BrakingEvent {
   throttlePickupM: number;
 }
 
+export interface SectorBreakdown {
+  sector1Ms: number | null;
+  sector2Ms: number | null;
+  sector3Ms: number | null;
+}
+
+export interface LapDistanceSummary {
+  rawLapLengthM: number;
+  normalizedLapLengthM: number;
+  scaleFactor: number;
+  firstSampleOffsetMs: number;
+}
+
+export interface LapTyreSummary {
+  compound: string | null;
+  age: number | null;
+  stint: number | null;
+}
+
 export interface LapAnalysis {
   id: number;
   lapNumber: number;
@@ -149,8 +168,52 @@ export interface LapAnalysis {
     peakBrakePct: number;
     lapTimeMs: number;
   };
+  sectors: SectorBreakdown;
+  tyre: LapTyreSummary;
   points: ChartPoint[];
+  distance: LapDistanceSummary;
   events: BrakingEvent[];
+}
+
+export interface SectorComparison {
+  label: string;
+  referenceMs: number | null;
+  targetMs: number | null;
+  deltaMs: number | null;
+  winner: string;
+}
+
+export interface CornerMetrics {
+  entrySpeedKph: number;
+  apexSpeedKph: number;
+  exitSpeedKph: number;
+  peakBrakePct: number;
+  throttleAtExitPct: number;
+  apexDistanceM: number;
+  peakDistanceM: number;
+}
+
+export interface CornerComparison {
+  key: string;
+  label: string;
+  distanceM: number;
+  entryDistanceM: number;
+  exitDistanceM: number;
+  reference: CornerMetrics;
+  target: CornerMetrics;
+  entryDeltaMs: number;
+  apexDeltaMs: number;
+  exitDeltaMs: number;
+  phaseDeltaMs: number;
+  fasterDriver: string;
+}
+
+export interface ReportItem {
+  label: string;
+  winner?: string;
+  owner?: string;
+  deltaMs: number;
+  note: string;
 }
 
 export interface ComparisonResponse {
@@ -165,6 +228,9 @@ export interface ComparisonResponse {
   settings: {
     distanceStep: number;
     smoothingWindow: number;
+    payloadVersion: number;
+    normalizationMode: string;
+    normalizationVersion: number;
   };
   referenceLap: LapAnalysis;
   targetLap: LapAnalysis;
@@ -181,5 +247,35 @@ export interface ComparisonResponse {
       biggestTargetLossMs: number;
       winnerLapId: number;
     };
+  };
+  sectorAnalysis: {
+    sectors: SectorComparison[];
+    summary: {
+      strongestSectorLabel: string | null;
+      strongestSectorWinner: string | null;
+      strongestSectorDeltaMs: number | null;
+      targetBetterCount: number;
+      referenceBetterCount: number;
+    };
+  };
+  cornerAnalysis: {
+    corners: CornerComparison[];
+    summary: {
+      targetBetterCorners: number;
+      referenceBetterCorners: number;
+      biggestTargetGainLabel: string | null;
+      biggestTargetGainMs: number | null;
+      biggestReferenceGainLabel: string | null;
+      biggestReferenceGainMs: number | null;
+    };
+  };
+  report: {
+    headline: string;
+    summary: string[];
+    strongestSectors: ReportItem[];
+    biggestLosses: ReportItem[];
+    tyreNotes: string[];
+    brakeNotes: string[];
+    exportMarkdown: string;
   };
 }
