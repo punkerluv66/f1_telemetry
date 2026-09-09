@@ -1,0 +1,33 @@
+{
+  "recordedAt": "2026-09-09T09:34:47.888Z",
+  "scenario": "One cached lap and one uncached lap, same driver; streamed production API",
+  "sessionId": 6,
+  "referenceLapId": 3178,
+  "targetLapId": 3198,
+  "status": 200,
+  "bytes": 167689,
+  "events": [
+    {
+      "type": "progress",
+      "stage": "queued",
+      "elapsedMs": 51.2
+    },
+    {
+      "type": "progress",
+      "stage": "loading",
+      "elapsedMs": 54.2
+    },
+    {
+      "type": "progress",
+      "stage": "calculating",
+      "elapsedMs": 2511
+    },
+    {
+      "type": "result",
+      "elapsedMs": 2613.4,
+      "deltaMs": -89,
+      "referenceSamples": 329,
+      "targetSamples": 323
+    }
+  ]
+}

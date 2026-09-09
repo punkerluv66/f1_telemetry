@@ -1,0 +1,51 @@
+{
+  "recordedAt": "2026-09-09T09:36:06.845Z",
+  "cases": [
+    {
+      "case": "same lap",
+      "status": 200,
+      "deltaMs": 0
+    },
+    {
+      "case": "cross-session",
+      "status": 400,
+      "error": "Both laps must belong to the selected session."
+    },
+    {
+      "case": "pit-in",
+      "status": 422,
+      "error": "Pit-in laps cannot be compared. Select a clean lap."
+    },
+    {
+      "case": "invalid smoothing",
+      "status": 400,
+      "error": "smoothingWindow: Use an odd smoothing window."
+    },
+    {
+      "case": "missing lap",
+      "status": 404,
+      "error": "Lap 2147483647 was not found."
+    },
+    {
+      "case": "streamed cross-session",
+      "httpStatus": 200,
+      "events": [
+        {
+          "type": "progress",
+          "stage": "queued"
+        },
+        {
+          "type": "error",
+          "error": "Both laps must belong to the selected session."
+        }
+      ]
+    }
+  ],
+  "concurrent": {
+    "requests": 25,
+    "concurrency": 5,
+    "medianMs": 57.9,
+    "p95Ms": 133.1,
+    "maxMs": 146.6
+  }
+}

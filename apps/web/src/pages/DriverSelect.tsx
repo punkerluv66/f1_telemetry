@@ -1,496 +1,943 @@
-import { startTransition, useDeferredValue, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { DriverPicker } from "../components/DriverPicker";
+import { MiniSectorPanel } from "../components/MiniSectorPanel";
 import { ChartCard } from "../components/ChartCard";
 import { CornerAnalysisPanel } from "../components/CornerAnalysisPanel";
 import { TrackMap } from "../components/TrackMap";
-import { DriverSummaryCard } from "../components/DriverSummaryCard";
 import { EngineerReportPanel } from "../components/EngineerReportPanel";
 import { StintPerformancePanel } from "../components/StintPerformancePanel";
 import { compareLaps, getSessionOverview } from "../lib/api";
-import { formatDelta, formatMsAsLapTime } from "../lib/formatters";
-import { getDriverById, getErrorMessage, getPreferredLapId, formatLapOption } from "../lib/helpers";
+import { formatDelta, formatLapTime } from "../lib/formatters";
+import {
+  getDriverById,
+  getErrorMessage,
+  getPreferredLapId,
+} from "../lib/helpers";
 import type { ComparisonResponse, ImportedSessionOverview } from "../types";
 
-const chartDefinitions = [
-  {
-    key: "speedKph",
-    title: "Speed Trace",
-    subtitle: "Distance-aligned velocity overlays across the selected laps.",
-    unit: "km/h"
-  },
-  {
-    key: "throttlePct",
-    title: "Throttle Application",
-    subtitle: "Compare exit commitment and traction management across the lap.",
-    unit: "%"
-  },
-  {
-    key: "brakePct",
-    title: "Brake Pressure",
-    subtitle: "See braking shape, release timing, and attack into each corner.",
-    unit: "%"
-  },
-  {
-    key: "deltaMs",
-    title: "Delta Time",
-    subtitle: "Negative means the right-side lap is ahead of the left-side lap.",
-    unit: "ms",
-    centerZero: true
-  }
-] as const;
-
 export function DriverSelect() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const sessionId = id ? parseInt(id, 10) : null;
-
-  const [overview, setOverview] = useState<ImportedSessionOverview | null>(null);
-  const [leftDriverId, setLeftDriverId] = useState<number | null>(null);
-  const [rightDriverId, setRightDriverId] = useState<number | null>(null);
-  const [leftLapId, setLeftLapId] = useState<number | null>(null);
-  const [rightLapId, setRightLapId] = useState<number | null>(null);
+  const { id } = useParams();
+  const sessionId = Number(id);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [overview, setOverview] = useState<ImportedSessionOverview | null>(
+    null,
+  );
+  const [driversExpanded, setDriversExpanded] = useState(true);
   const [distanceStep, setDistanceStep] = useState(10);
-  const [smoothingWindow, setSmoothingWindow] = useState(5);
+  const [smoothingWindow, setSmoothingWindow] = useState(3);
   const [comparison, setComparison] = useState<ComparisonResponse | null>(null);
-  const [hoverDistance, setHoverDistance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loadingOverview, setLoadingOverview] = useState(false);
-  const [loadingCompare, setLoadingCompare] = useState(false);
-  const [showLongRun, setShowLongRun] = useState(false);
-  const [showCornerAnalysis, setShowCornerAnalysis] = useState(false);
-  const [showEngineerReport, setShowEngineerReport] = useState(false);
-
-  const deferredComparison = useDeferredValue(comparison);
+  const [loading, setLoading] = useState(true);
+  const [comparing, setComparing] = useState(false);
+  const [progress, setProgress] = useState("Preparing comparison…");
+  const [linkMessage, setLinkMessage] = useState("");
+  const request = useRef<AbortController | null>(null);
+  const requestVersion = useRef(0);
 
   useEffect(() => {
-    if (!sessionId) {
+    const controller = new AbortController();
+    setOverview(null);
+    setComparison(null);
+    setDriversExpanded(true);
+    setComparing(false);
+    setLoading(true);
+    setError(null);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      setError("Invalid session address.");
+      setLoading(false);
       return;
     }
-
-    void loadOverview(sessionId);
+    getSessionOverview(sessionId, controller.signal)
+      .then((payload) => {
+        if (!controller.signal.aborted) setOverview(payload);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setError(getErrorMessage(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => {
+      controller.abort();
+      request.current?.abort();
+      requestVersion.current++;
+    };
   }, [sessionId]);
 
+  const leftDriver =
+    overview?.driverSummaries.find(
+      (driver) => driver.driverNumber === Number(searchParams.get("left")),
+    ) ?? null;
+  const rightDriver =
+    overview?.driverSummaries.find(
+      (driver) => driver.driverNumber === Number(searchParams.get("right")),
+    ) ?? null;
+  const leftDriverId = leftDriver?.id ?? null;
+  const rightDriverId = rightDriver?.id ?? null;
+  const race = !!overview && ["Race", "Sprint"].includes(overview.sessionName);
+  const eligible = (lap: NonNullable<typeof leftDriver>["laps"][number]) =>
+    lap.lapDuration !== null &&
+    lap.lapDuration > 0 &&
+    !lap.isPitLap &&
+    !lap.isPitOutLap;
+  const selectedLap = (driver: typeof leftDriver, side: string) => {
+    if (!driver) return null;
+    const stint =
+      race &&
+      driver.stints.find(
+        (item) => item.stintNumber === Number(searchParams.get(side + "Stint")),
+      );
+    const laps = driver.laps.filter(
+      (lap) => eligible(lap) && (!stint || lap.stint === stint.stintNumber),
+    );
+    return (
+      laps.find(
+        (lap) => lap.lapNumber === Number(searchParams.get(side + "Lap")),
+      )?.id ?? getPreferredLapId({ ...driver, laps }, null)
+    );
+  };
+  const leftLapId = selectedLap(leftDriver, "left");
+  const rightLapId = selectedLap(rightDriver, "right");
   useEffect(() => {
-    if (!overview) {
-      return;
-    }
-
-    setLeftDriverId((current) => {
-      if (current && overview.driverSummaries.some((driver) => driver.id === current)) {
-        return current;
-      }
-
-      return overview.defaultDriverPair.leftDriverId;
-    });
-
-    setRightDriverId((current) => {
-      if (current && overview.driverSummaries.some((driver) => driver.id === current)) {
-        return current;
-      }
-
-      return overview.defaultDriverPair.rightDriverId;
-    });
-  }, [overview]);
-
+    const step = Number(searchParams.get("step") ?? 10);
+    const smoothing = Number(searchParams.get("smooth") ?? 3);
+    setDistanceStep(
+      Number.isInteger(step) && step >= 5 && step <= 100 ? step : 10,
+    );
+    setSmoothingWindow(
+      Number.isInteger(smoothing) &&
+        smoothing >= 1 &&
+        smoothing <= 21 &&
+        smoothing % 2 === 1
+        ? smoothing
+        : 3,
+    );
+    setLinkMessage("");
+  }, [searchParams]);
   useEffect(() => {
-    if (!overview) {
-      return;
+    invalidate();
+    setDriversExpanded(!(leftDriverId && rightDriverId));
+  }, [
+    sessionId,
+    leftDriverId,
+    rightDriverId,
+    leftLapId,
+    rightLapId,
+    distanceStep,
+    smoothingWindow,
+  ]);
+
+  function updateSelection(values: Record<string, number | null>) {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      for (const [key, value] of Object.entries(values)) {
+        if (value === null) next.delete(key);
+        else next.set(key, String(value));
+      }
+      return next;
+    });
+  }
+  function chooseLap(side: "left" | "right", lapId: number) {
+    const driver = side === "left" ? leftDriver : rightDriver;
+    const lap = driver?.laps.find((item) => item.id === lapId);
+    if (lap) {
+      invalidate();
+      updateSelection({ [side + "Lap"]: lap.lapNumber });
     }
+  }
+  async function copySelection() {
+    const query = new URLSearchParams(searchParams);
+    if (leftDriver && rightDriver) {
+      query.set("left", String(leftDriver.driverNumber));
+      query.set("right", String(rightDriver.driverNumber));
+      for (const [side, driver, lapId] of [
+        ["left", leftDriver, leftLapId],
+        ["right", rightDriver, rightLapId],
+      ] as const) {
+        const lap = driver.laps.find((lap) => lap.id === lapId);
+        if (lap) query.set(side + "Lap", String(lap.lapNumber));
+      }
+    }
+    if (validSettings) {
+      query.set("step", String(distanceStep));
+      query.set("smooth", String(smoothingWindow));
+    }
+    const url = new URL(window.location.href);
+    url.search = query.toString();
+    try {
+      await navigator.clipboard.writeText(url.href);
+      setLinkMessage("Link copied");
+    } catch {
+      setLinkMessage(
+        "Copy the address from your browser to share this selection.",
+      );
+    }
+  }
 
-    const nextLeftDriver = getDriverById(overview, leftDriverId);
-    const nextRightDriver = getDriverById(overview, rightDriverId);
-
-    setLeftLapId((current) => getPreferredLapId(nextLeftDriver, current));
-    setRightLapId((current) => getPreferredLapId(nextRightDriver, current));
+  function invalidate() {
+    request.current?.abort();
+    requestVersion.current++;
     setComparison(null);
-    setHoverDistance(null);
-  }, [overview, leftDriverId, rightDriverId]);
-
-  useEffect(() => {
-    setShowLongRun(false);
-    setShowCornerAnalysis(false);
-    setShowEngineerReport(false);
-  }, [leftDriverId, rightDriverId, leftLapId, rightLapId, comparison?.referenceLap.id, comparison?.targetLap.id]);
-
-  async function loadOverview(id: number) {
-    try {
-      setLoadingOverview(true);
-      setError(null);
-      const payload = await getSessionOverview(id);
-
-      startTransition(() => {
-        setOverview(payload);
-        setComparison(null);
-        setHoverDistance(null);
-      });
-    } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
-    } finally {
-      setLoadingOverview(false);
-    }
+    setComparing(false);
+    setError(null);
   }
-
+  function selectDriver(side: "left" | "right", driverId: number) {
+    invalidate();
+    const lapId = overview
+      ? getPreferredLapId(getDriverById(overview, driverId), null)
+      : null;
+    const driver = overview ? getDriverById(overview, driverId) : null;
+    if (driver)
+      updateSelection({
+        [side]: driver.driverNumber,
+        [side + "Lap"]:
+          driver.laps.find((lap) => lap.id === lapId)?.lapNumber ?? null,
+        [side + "Stint"]: null,
+      });
+  }
   async function handleCompare() {
-    if (!overview || !leftLapId || !rightLapId) {
-      return;
-    }
-
+    if (!overview || !leftLapId || !rightLapId) return;
+    invalidate();
+    const version = requestVersion.current;
+    const controller = new AbortController();
+    request.current = controller;
+    setComparing(true);
+    setProgress("Waiting for analysis…");
     try {
-      setLoadingCompare(true);
-      setError(null);
-      const payload = await compareLaps({
-        sessionId: overview.id,
-        referenceLapId: leftLapId,
-        targetLapId: rightLapId,
-        distanceStep,
-        smoothingWindow
-      });
-
-      startTransition(() => {
+      const payload = await compareLaps(
+        {
+          sessionId: overview.id,
+          referenceLapId: leftLapId,
+          targetLapId: rightLapId,
+          distanceStep,
+          smoothingWindow,
+        },
+        controller.signal,
+        (message) => {
+          if (!controller.signal.aborted && version === requestVersion.current)
+            setProgress(message);
+        },
+      );
+      if (!controller.signal.aborted && version === requestVersion.current)
         setComparison(payload);
-      });
-    } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+    } catch (error) {
+      if (!controller.signal.aborted && version === requestVersion.current)
+        setError(getErrorMessage(error));
     } finally {
-      setLoadingCompare(false);
+      if (version === requestVersion.current) setComparing(false);
     }
   }
-
-  const leftDriver = overview ? getDriverById(overview, leftDriverId) : null;
-  const rightDriver = overview ? getDriverById(overview, rightDriverId) : null;
-  const leftLapOptions = leftDriver?.laps.filter((lap) => lap.lapDuration !== null) ?? [];
-  const rightLapOptions = rightDriver?.laps.filter((lap) => lap.lapDuration !== null) ?? [];
-  const sectorGuideMarkers = deferredComparison ? buildSectorGuideMarkers(deferredComparison) : [];
+  const pairReady = !!leftDriver && !!rightDriver;
+  const validSettings =
+    Number.isInteger(distanceStep) &&
+    distanceStep >= 5 &&
+    distanceStep <= 100 &&
+    Number.isInteger(smoothingWindow) &&
+    smoothingWindow >= 1 &&
+    smoothingWindow <= 21 &&
+    smoothingWindow % 2 === 1;
 
   return (
     <div className="shell shell--full">
-      <main className="dashboard dashboard--wide">
-        <div className="page-header">
-          <button type="button" onClick={() => navigate("/")} className="button-secondary">
-            Back to Sessions
-          </button>
-          {overview ? (
-            <h2 className="page-header__title">
-              {overview.year} {overview.countryName} - {overview.sessionName}
-            </h2>
-          ) : null}
-          <div className="page-header__spacer" />
-        </div>
-
-        {error ? <p className="error-banner">{error}</p> : null}
-        {loadingOverview ? <p className="muted">Loading session data...</p> : null}
-
-        <section className="driver-grid">
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <div className="panel panel--dark controls">
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label>Driver 1</label>
-                <select
-                  value={leftDriverId ?? ""}
-                  onChange={(event) => setLeftDriverId(Number(event.target.value))}
-                  disabled={!overview}
-                >
-                  {overview?.driverSummaries.map((driver) => (
-                    <option value={driver.id} key={driver.id}>
-                      {driver.result.classificationLabel} - {driver.acronym} - {driver.fullName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            {leftDriver ? (
-              <DriverSummaryCard sideLabel="Driver 1" driver={leftDriver} sessionType={overview?.sessionType ?? null} />
-            ) : null}
+      <main className="dashboard">
+        <header className="page-header">
+          <div>
+            <Link to="/" className="back-link">
+              ← Sessions
+            </Link>
+            <h1>
+              {overview
+                ? overview.countryName + " · " + overview.sessionName
+                : "Session analysis"}
+            </h1>
+            <p className="muted">
+              {overview
+                ? overview.year + " / " + overview.circuitShortName
+                : "Choose drivers to begin."}
+            </p>
           </div>
-
-          <div className="versus-divider">VS</div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <div className="panel panel--dark controls">
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label>Driver 2</label>
-                <select
-                  value={rightDriverId ?? ""}
-                  onChange={(event) => setRightDriverId(Number(event.target.value))}
-                  disabled={!overview}
-                >
-                  {overview?.driverSummaries.map((driver) => (
-                    <option value={driver.id} key={driver.id}>
-                      {driver.result.classificationLabel} - {driver.acronym} - {driver.fullName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            {rightDriver ? (
-              <DriverSummaryCard sideLabel="Driver 2" driver={rightDriver} sessionType={overview?.sessionType ?? null} />
-            ) : null}
+          <span className="app-mark">F1 / TELEMETRY</span>
+        </header>
+        {error && !pairReady && (
+          <div role="alert" className="error-banner">
+            {error}
           </div>
-        </section>
-
-        {leftDriver && rightDriver ? (
+        )}
+        {loading && (
+          <p role="status" className="empty-state">
+            Loading session…
+          </p>
+        )}
+        {overview && (
           <>
-            <section className="panel lap-panel">
-              <div className="lap-panel__header">
+            <ol className="flow-steps" aria-label="Analysis steps">
+              <li className={!pairReady ? "is-current" : "is-complete"}>
+                <span>01</span>Choose drivers
+              </li>
+              {race && (
+                <li
+                  className={
+                    comparison ? "is-complete" : pairReady ? "is-current" : ""
+                  }
+                >
+                  <span>02</span>Race pace
+                </li>
+              )}
+              <li
+                className={
+                  comparison
+                    ? "is-complete"
+                    : pairReady && !race
+                      ? "is-current"
+                      : ""
+                }
+              >
+                <span>{race ? "03" : "02"}</span>Compare laps
+              </li>
+            </ol>
+            <section
+              className="driver-selection-stage"
+              aria-labelledby="driver-stage-title"
+            >
+              <div className="stage-heading">
                 <div>
-                  <p className="hero__eyebrow">Lap Selection</p>
-                  <h3 className="section-title">Select Laps to Analyze</h3>
-                </div>
-              </div>
-              <div className="lap-picker-grid">
-                <div className="field">
-                  <label>{leftDriver.acronym} lap</label>
-                  <select value={leftLapId ?? ""} onChange={(event) => setLeftLapId(Number(event.target.value))}>
-                    {leftLapOptions.map((lap) => (
-                      <option
-                        key={lap.id}
-                        value={lap.id}
-                        style={lap.lapDuration === leftDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
-                      >
-                        {lap.lapDuration === leftDriver.stats.bestLapSeconds ? "* " : ""}
-                        {formatLapOption(lap)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>{rightDriver.acronym} lap</label>
-                  <select value={rightLapId ?? ""} onChange={(event) => setRightLapId(Number(event.target.value))}>
-                    {rightLapOptions.map((lap) => (
-                      <option
-                        key={lap.id}
-                        value={lap.id}
-                        style={lap.lapDuration === rightDriver.stats.bestLapSeconds ? { color: "#7d3cf8", fontWeight: "bold" } : {}}
-                      >
-                        {lap.lapDuration === rightDriver.stats.bestLapSeconds ? "* " : ""}
-                        {formatLapOption(lap)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label>Distance step (m)</label>
-                  <input
-                    type="number"
-                    value={distanceStep}
-                    onChange={(event) => setDistanceStep(Number(event.target.value))}
-                    min={5}
-                    max={100}
-                    step={5}
-                  />
-                </div>
-                <div className="field">
-                  <label>Smoothing window</label>
-                  <input
-                    type="number"
-                    value={smoothingWindow}
-                    onChange={(event) => setSmoothingWindow(Number(event.target.value))}
-                    min={1}
-                    max={21}
-                    step={2}
-                  />
-                </div>
-              </div>
-              <div className="lap-panel__actions">
-                <button type="button" onClick={() => void handleCompare()} disabled={loadingCompare || !leftLapId || !rightLapId}>
-                  {loadingCompare ? "Analyzing..." : "Compare Selected Laps"}
-                </button>
-              </div>
-            </section>
-
-          </>
-        ) : null}
-
-        {deferredComparison ? (
-          <>
-            <section className="kpi-grid">
-              <article className="panel kpi-card">
-                <p className="kpi-card__label">{deferredComparison.referenceLap.driver.acronym} lap time</p>
-                <p className="kpi-card__value">{formatMsAsLapTime(deferredComparison.referenceLap.summary.lapTimeMs)}</p>
-              </article>
-              <article className="panel kpi-card">
-                <p className="kpi-card__label">{deferredComparison.targetLap.driver.acronym} lap time</p>
-                <p className="kpi-card__value">{formatMsAsLapTime(deferredComparison.targetLap.summary.lapTimeMs)}</p>
-              </article>
-              <article className="panel kpi-card">
-                <p className="kpi-card__label">Selected lap delta</p>
-                <p className="kpi-card__value">{formatDelta(deferredComparison.delta.summary.finalDeltaMs)}</p>
-              </article>
-              <article className="panel kpi-card">
-                <p className="kpi-card__label">Braking zones</p>
-                <p className="kpi-card__value">{deferredComparison.targetLap.events.length}</p>
-              </article>
-            </section>
-
-            <TrackMap comparison={deferredComparison} hoverDistance={hoverDistance} onHover={setHoverDistance} />
-
-            <section className="chart-grid">
-              {chartDefinitions.map((definition) => {
-                const series = definition.key === "deltaMs"
-                  ? [
-                      {
-                        label: `${deferredComparison.targetLap.driver.acronym} - ${deferredComparison.referenceLap.driver.acronym}`,
-                        color: "#7d3cf8",
-                        points: deferredComparison.delta.points.map((point) => ({
-                          distanceM: point.distanceM,
-                          value: point.deltaMs
-                        }))
-                      }
-                    ]
-                  : [
-                      {
-                        label: `${deferredComparison.referenceLap.driver.acronym} lap`,
-                        color: deferredComparison.referenceLap.driver.color,
-                        points: deferredComparison.referenceLap.points.map((point) => ({
-                          distanceM: point.distanceM,
-                          value: point[definition.key] as number
-                        }))
-                      },
-                      {
-                        label: `${deferredComparison.targetLap.driver.acronym} lap`,
-                        color: deferredComparison.targetLap.driver.color,
-                        points: deferredComparison.targetLap.points.map((point) => ({
-                          distanceM: point.distanceM,
-                          value: point[definition.key] as number
-                        }))
-                      }
-                    ];
-
-                const maxDistance = Math.max(
-                  deferredComparison.referenceLap.points[deferredComparison.referenceLap.points.length - 1]?.distanceM ?? 0,
-                  deferredComparison.targetLap.points[deferredComparison.targetLap.points.length - 1]?.distanceM ?? 0
-                );
-
-                return (
-                  <ChartCard
-                    key={definition.key}
-                    title={definition.title}
-                    subtitle={definition.subtitle}
-                    unit={definition.unit}
-                    series={series}
-                    maxDistance={maxDistance}
-                    hoverDistance={hoverDistance}
-                    onHover={setHoverDistance}
-                    centerZero={"centerZero" in definition ? definition.centerZero : undefined}
-                    guideMarkers={sectorGuideMarkers}
-                  />
-                );
-              })}
-            </section>
-
-            <section className="panel analysis-panel analysis-drawer">
-              <div className="analysis-panel__header">
-                <div>
-                  <p className="hero__eyebrow">Additional Analysis</p>
-                  <h3 className="section-title">Deep-Dive Tools</h3>
-                  <p className="lap-panel__text">
-                    Core lap comparison stays at the top. Open the deeper race-engineering views only when you need more context.
+                  <h2 id="driver-stage-title">
+                    {pairReady ? "Your driver pair" : "Choose two drivers"}
+                  </h2>
+                  <p className="muted">
+                    {race
+                      ? "Start with the race, then look at individual laps."
+                      : "Select drivers, then choose their qualifying laps."}
                   </p>
                 </div>
-                <div className="analysis-toggle-bar">
+                {pairReady && (
                   <button
                     type="button"
-                    className={`button-secondary analysis-toggle${showLongRun ? " is-active" : ""}`}
-                    onClick={() => setShowLongRun((current) => !current)}
-                    aria-expanded={showLongRun}
+                    className="button-secondary"
+                    aria-expanded={driversExpanded}
+                    aria-controls="driver-lists"
+                    onClick={() => setDriversExpanded((value) => !value)}
                   >
-                    {showLongRun ? "Hide Long-Run View" : "Open Long-Run View"}
+                    {driversExpanded ? "Done choosing" : "Change drivers"}
                   </button>
+                )}
+              </div>
+              {!driversExpanded && leftDriver && rightDriver && (
+                <div className="selected-driver-pair">
+                  <div>
+                    <i className="trace-dot trace-dot--reference" />
+                    <strong>{leftDriver.fullName}</strong>
+                    <span>
+                      Left · {leftDriver.result.classificationLabel} ·{" "}
+                      {leftDriver.teamName}
+                    </span>
+                  </div>
+                  <span className="pair-vs">VS</span>
+                  <div>
+                    <i className="trace-dot trace-dot--target" />
+                    <strong>{rightDriver.fullName}</strong>
+                    <span>
+                      Right · {rightDriver.result.classificationLabel} ·{" "}
+                      {rightDriver.teamName}
+                    </span>
+                  </div>
+                </div>
+              )}
+              {driversExpanded && (
+                <div className="selection-grid" id="driver-lists">
+                  <DriverPicker
+                    side="left"
+                    drivers={overview.driverSummaries}
+                    selectedId={leftDriverId}
+                    onSelect={(id) => selectDriver("left", id)}
+                    race={race}
+                  />
+                  <DriverPicker
+                    side="right"
+                    drivers={overview.driverSummaries}
+                    selectedId={rightDriverId}
+                    onSelect={(id) => selectDriver("right", id)}
+                    race={race}
+                  />
+                </div>
+              )}
+              {!pairReady && (
+                <p className="selection-hint" role="status">
+                  {leftDriver
+                    ? leftDriver.acronym +
+                      " selected on the left. Now choose the right driver."
+                    : rightDriver
+                      ? rightDriver.acronym +
+                        " selected on the right. Now choose the left driver."
+                      : "Choose one card on each side to start the analysis."}
+                </p>
+              )}
+            </section>
+          </>
+        )}
+        {pairReady && leftDriver && rightDriver && (
+          <>
+            {race && (
+              <section
+                className="race-pace-stage"
+                id="race-pace"
+                aria-labelledby="race-pace-title"
+              >
+                <div className="stage-heading">
+                  <div>
+                    <p className="eyebrow">02 / WHOLE RACE</p>
+                    <h2 id="race-pace-title">Race pace & stints</h2>
+                  </div>
+                  <a href="#lap-comparison" className="back-link">
+                    Compare individual laps ↓
+                  </a>
+                </div>
+                <StintPerformancePanel
+                  key={leftDriver.id + ":" + rightDriver.id}
+                  leftDriver={leftDriver}
+                  rightDriver={rightDriver}
+                />
+              </section>
+            )}
+            <section
+              className="panel lap-selection-stage"
+              id="lap-comparison"
+              aria-labelledby="lap-stage-title"
+            >
+              <div className="stage-heading">
+                <div>
+                  <p className="eyebrow">
+                    {race ? "03" : "02"} / INDIVIDUAL LAPS
+                  </p>
+                  <h2 id="lap-stage-title">Choose laps to compare</h2>
+                  <p className="muted">
+                    Fastest eligible laps are preselected. Change either lap to
+                    explore another part of the session.
+                  </p>
+                </div>
+                <div className="share-selection">
                   <button
                     type="button"
-                    className={`button-secondary analysis-toggle${showCornerAnalysis ? " is-active" : ""}`}
-                    onClick={() => setShowCornerAnalysis((current) => !current)}
-                    aria-expanded={showCornerAnalysis}
+                    className="button-secondary"
+                    onClick={() => void copySelection()}
                   >
-                    {showCornerAnalysis ? "Hide Braking Points" : "Open Braking Points"}
+                    Copy selection link
                   </button>
-                  <button
-                    type="button"
-                    className={`button-secondary analysis-toggle${showEngineerReport ? " is-active" : ""}`}
-                    onClick={() => setShowEngineerReport((current) => !current)}
-                    aria-expanded={showEngineerReport}
-                  >
-                    {showEngineerReport ? "Hide Engineer Report" : "Open Engineer Report"}
-                  </button>
+                  <span role="status" className="muted">
+                    {linkMessage}
+                  </span>
                 </div>
               </div>
+              <div className="lap-selection-grid">
+                {(["left", "right"] as const).map((side) => {
+                  const driver = side === "left" ? leftDriver : rightDriver;
+                  const stintFilter =
+                    race &&
+                    driver.stints.some(
+                      (stint) =>
+                        stint.stintNumber ===
+                        Number(searchParams.get(side + "Stint")),
+                    )
+                      ? Number(searchParams.get(side + "Stint"))
+                      : null;
+                  const laps = driver.laps.filter(
+                    (lap) =>
+                      lap.lapDuration !== null &&
+                      lap.lapDuration > 0 &&
+                      !lap.isPitLap &&
+                      !lap.isPitOutLap &&
+                      (stintFilter === null || lap.stint === stintFilter),
+                  );
+                  return (
+                    <div
+                      key={side}
+                      className={
+                        "lap-selection-column lap-selection-column--" + side
+                      }
+                    >
+                      {race && (
+                        <label htmlFor={side + "-stint"}>
+                          {driver.acronym} · Stint filter
+                          <select
+                            id={side + "-stint"}
+                            value={stintFilter ?? ""}
+                            onChange={(event) => {
+                              const stint = event.target.value
+                                ? Number(event.target.value)
+                                : null;
+                              const current = driver.laps.find(
+                                (lap) =>
+                                  lap.id ===
+                                  (side === "left" ? leftLapId : rightLapId),
+                              );
+                              const candidates = driver.laps.filter(
+                                (lap) =>
+                                  eligible(lap) &&
+                                  (stint === null || lap.stint === stint),
+                              );
+                              const nextLap =
+                                current && candidates.includes(current)
+                                  ? current
+                                  : [...candidates].sort(
+                                      (a, b) => a.lapDuration! - b.lapDuration!,
+                                    )[0];
+                              invalidate();
+                              updateSelection({
+                                [side + "Stint"]: stint,
+                                [side + "Lap"]: nextLap?.lapNumber ?? null,
+                              });
+                            }}
+                          >
+                            <option value="">All stints</option>
+                            {driver.stints.map((stint) => (
+                              <option key={stint.id} value={stint.stintNumber}>
+                                {"Stint " +
+                                  stint.stintNumber +
+                                  " · " +
+                                  (stint.compound ?? "Unknown") +
+                                  " · L" +
+                                  stint.lapStart +
+                                  "–" +
+                                  stint.lapEnd}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      <label htmlFor={side + "-lap"}>
+                        <span>
+                          <i
+                            className={
+                              "trace-dot trace-dot--" +
+                              (side === "left" ? "reference" : "target")
+                            }
+                          />
+                          {driver.acronym} ·{" "}
+                          {side === "left" ? "Left lap" : "Right lap"}
+                        </span>
+                      </label>
+                      <select
+                        id={side + "-lap"}
+                        value={(side === "left" ? leftLapId : rightLapId) ?? ""}
+                        disabled={!laps.length}
+                        onChange={(event) => {
+                          invalidate();
+                          chooseLap(side, Number(event.target.value));
+                        }}
+                      >
+                        <option value="" disabled>
+                          No eligible timed laps
+                        </option>
+                        {laps.map((lap) => (
+                          <option key={lap.id} value={lap.id}>
+                            {"L" +
+                              lap.lapNumber +
+                              " · " +
+                              formatLapTime(lap.lapDuration) +
+                              (lap.tyreCompound
+                                ? " · " + lap.tyreCompound
+                                : "") +
+                              (lap.tyreAge != null
+                                ? " / " +
+                                  lap.tyreAge +
+                                  (lap.tyreAge === 1 ? " lap" : " laps")
+                                : "")}
+                          </option>
+                        ))}
+                      </select>
+                      {!laps.length && (
+                        <p className="muted">
+                          No eligible laps in this selection. Try another stint
+                          or driver.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="selection-footer">
+                <details className="settings">
+                  <summary>Analysis settings</summary>
+                  <div className="settings-fields">
+                    <label>
+                      Distance step · m
+                      <input
+                        type="number"
+                        min={5}
+                        max={100}
+                        step={5}
+                        value={distanceStep}
+                        onBlur={() => {
+                          if (validSettings)
+                            updateSelection({
+                              step: distanceStep,
+                              smooth: smoothingWindow,
+                            });
+                        }}
+                        onChange={(event) => {
+                          invalidate();
+                          setDistanceStep(Number(event.target.value));
+                        }}
+                      />
+                    </label>
+                    <label>
+                      Smoothing · samples
+                      <input
+                        type="number"
+                        min={1}
+                        max={21}
+                        step={2}
+                        value={smoothingWindow}
+                        onBlur={() => {
+                          if (validSettings)
+                            updateSelection({
+                              step: distanceStep,
+                              smooth: smoothingWindow,
+                            });
+                        }}
+                        onChange={(event) => {
+                          invalidate();
+                          setSmoothingWindow(Number(event.target.value));
+                        }}
+                      />
+                    </label>
+                    <p className="muted">
+                      Smoothing affects speed and throttle. Use an odd window,
+                      or 1 for the original signal.
+                    </p>
+                  </div>
+                </details>
+                <button
+                  onClick={() => void handleCompare()}
+                  disabled={
+                    comparing ||
+                    !leftLapId ||
+                    !rightLapId ||
+                    leftLapId === rightLapId ||
+                    !validSettings
+                  }
+                >
+                  {comparing ? progress : "Compare laps"}
+                </button>
+              </div>
+              {leftLapId && leftLapId === rightLapId && (
+                <p className="muted">
+                  Choose two different laps. You can compare the same driver on
+                  both sides.
+                </p>
+              )}
+              {error && (
+                <div role="alert" className="error-banner">
+                  {error}
+                </div>
+              )}
             </section>
-
-            {showLongRun && leftDriver && rightDriver ? (
-              <StintPerformancePanel leftDriver={leftDriver} rightDriver={rightDriver} />
-            ) : null}
-            {showCornerAnalysis ? <CornerAnalysisPanel comparison={deferredComparison} /> : null}
-            {showEngineerReport ? <EngineerReportPanel comparison={deferredComparison} /> : null}
           </>
-        ) : null}
+        )}
+        {comparing && (
+          <p role="status" className="loading-note">
+            {progress} The first comparison can take longer while telemetry is
+            downloaded.
+          </p>
+        )}
+        {comparison &&
+          comparison.settings.deltaConvention !== "reference-minus-target" && (
+            <p role="status" className="loading-note">
+              Analysis updated. Compare the selected laps again to refresh the
+              result.
+            </p>
+          )}
+        {pairReady &&
+          comparison &&
+          comparison.settings.deltaConvention === "reference-minus-target" &&
+          comparison.miniSectors && (
+            <ComparisonView
+              key={comparison.referenceLap.id + ":" + comparison.targetLap.id}
+              comparison={comparison}
+            />
+          )}
       </main>
     </div>
   );
 }
 
-function buildSectorGuideMarkers(comparison: ComparisonResponse) {
-  const sectorTimes = [
-    comparison.referenceLap.sectors.sector1Ms,
-    comparison.referenceLap.sectors.sector2Ms
-  ];
-  const cumulativeTimes: number[] = [];
-  let runningTime = 0;
-
-  for (const sectorTime of sectorTimes) {
-    if (sectorTime === null || sectorTime <= 0) {
-      break;
+function ComparisonView({ comparison }: { comparison: ComparisonResponse }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const [tab, setTab] = useState("telemetry");
+  const [showMap, setShowMap] = useState(false);
+  const [selectedSector, setSelectedSector] = useState<number | null>(null);
+  const selectedMiniSector = comparison.miniSectors.find(
+    (sector) => sector.number === selectedSector,
+  );
+  const [showPedals, setShowPedals] = useState(false);
+  const [showGear, setShowGear] = useState(false);
+  const reference = comparison.referenceLap,
+    target = comparison.targetLap;
+  const maxDistance = reference.points.at(-1)?.distanceM ?? 1;
+  const chartSeries = useMemo(() => {
+    const traces = (key: "speedKph" | "throttlePct" | "brakePct") => [
+      {
+        label: reference.driver.acronym + " L" + reference.lapNumber,
+        color: "#cf2f27",
+        points: reference.points.map((p) => ({
+          distanceM: p.distanceM,
+          value: p[key],
+        })),
+      },
+      {
+        label: target.driver.acronym + " L" + target.lapNumber,
+        color: "#1d658a",
+        points: target.points.map((p) => ({
+          distanceM: p.distanceM,
+          value: p[key],
+        })),
+      },
+    ];
+    return {
+      speed: traces("speedKph"),
+      throttle: traces("throttlePct"),
+      brake: traces("brakePct"),
+      gear: [reference, target].map((lap, index) => ({
+        label: lap.driver.acronym + " L" + lap.lapNumber,
+        color: index ? "#1d658a" : "#cf2f27",
+        points: lap.points
+          .filter((point) => point.gear !== null)
+          .map((point) => ({ distanceM: point.distanceM, value: point.gear! })),
+      })),
+      delta: [
+        {
+          label:
+            reference.driver.acronym +
+            " L" +
+            reference.lapNumber +
+            " − " +
+            target.driver.acronym +
+            " L" +
+            target.lapNumber,
+          color: "#cf2f27",
+          points: comparison.delta.points.map((p) => ({
+            distanceM: p.distanceM,
+            value: p.deltaMs,
+          })),
+        },
+      ],
+    };
+  }, [comparison, reference, target]);
+  const guides = useMemo(() => {
+    let elapsed = 0;
+    const markers: Array<{ distanceM: number; label: string }> = [];
+    for (const [index, duration] of [
+      reference.sectors.sector1Ms,
+      reference.sectors.sector2Ms,
+    ].entries()) {
+      if (duration === null || duration <= 0) break;
+      elapsed += duration;
+      const rightIndex = reference.points.findIndex(
+        (point) => point.timeOffsetMs >= elapsed,
+      );
+      if (rightIndex < 1) continue;
+      const left = reference.points[rightIndex - 1],
+        right = reference.points[rightIndex];
+      markers.push({
+        label: "S" + (index + 1),
+        distanceM:
+          left.distanceM +
+          ((right.distanceM - left.distanceM) * (elapsed - left.timeOffsetMs)) /
+            Math.max(1, right.timeOffsetMs - left.timeOffsetMs),
+      });
     }
-
-    runningTime += sectorTime;
-    cumulativeTimes.push(runningTime);
-  }
-
-  return cumulativeTimes.map((timeOffsetMs, index) => {
-    const point = findPointByTimeOffset(comparison.referenceLap.points, timeOffsetMs);
-
-    return {
-      key: `sector-${index + 1}`,
-      label: `S${index + 1}`,
-      distanceM: point.distanceM,
-      color: "rgba(20,20,20,0.34)",
-      dashArray: "10 8"
-    };
-  });
-}
-
-function findPointByTimeOffset(points: ComparisonResponse["referenceLap"]["points"], timeOffsetMs: number) {
-  if (points.length === 0) {
-    return {
-      distanceM: 0,
-      timeOffsetMs: 0
-    };
-  }
-
-  if (timeOffsetMs <= points[0].timeOffsetMs) {
-    return points[0];
-  }
-
-  if (timeOffsetMs >= points[points.length - 1].timeOffsetMs) {
-    return points[points.length - 1];
-  }
-
-  for (let index = 1; index < points.length; index += 1) {
-    const left = points[index - 1];
-    const right = points[index];
-
-    if (right.timeOffsetMs < timeOffsetMs) {
-      continue;
-    }
-
-    const span = Math.max(right.timeOffsetMs - left.timeOffsetMs, 1);
-    const ratio = (timeOffsetMs - left.timeOffsetMs) / span;
-
-    return {
-      ...right,
-      distanceM: left.distanceM + (right.distanceM - left.distanceM) * ratio,
-      timeOffsetMs
-    };
-  }
-
-  return points[points.length - 1];
+    return markers;
+  }, [reference]);
+  const shared = {
+    maxDistance,
+    hoverDistance: hover,
+    onHover: setHover,
+    guides,
+    highlightedRange: selectedMiniSector
+      ? {
+          start: selectedMiniSector.startDistanceM,
+          end: selectedMiniSector.endDistanceM,
+        }
+      : undefined,
+  };
+  return (
+    <>
+      <section className="result-strip">
+        <div>
+          <span className="trace-dot trace-dot--reference" />
+          {reference.driver.acronym} · L{reference.lapNumber}
+          <strong>{formatLapTime(reference.lapDuration)}</strong>
+        </div>
+        <div>
+          <span className="trace-dot trace-dot--target" />
+          {target.driver.acronym} · L{target.lapNumber}
+          <strong>{formatLapTime(target.lapDuration)}</strong>
+        </div>
+        <div>
+          Δ {reference.driver.acronym} L{reference.lapNumber} −{" "}
+          {target.driver.acronym} L{target.lapNumber}
+          <strong>
+            {formatDelta(comparison.delta.summary.officialDeltaMs)}
+          </strong>
+          <p className="delta-explainer">
+            {Math.abs(comparison.delta.summary.officialDeltaMs) < 0.5
+              ? "Same official lap time"
+              : reference.driver.acronym +
+                (comparison.delta.summary.officialDeltaMs > 0
+                  ? " is slower by "
+                  : " is faster by ") +
+                (
+                  Math.abs(comparison.delta.summary.officialDeltaMs) / 1000
+                ).toFixed(3) +
+                " s"}
+          </p>
+        </div>
+      </section>
+      <nav className="view-tabs" aria-label="Comparison views">
+        {[
+          ["telemetry", "Telemetry"],
+          ["zones", "Braking zones"],
+          ["report", "Report"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            aria-pressed={tab === key}
+            className={tab === key ? "active" : ""}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+      {tab === "telemetry" && (
+        <>
+          <MiniSectorPanel
+            comparison={comparison}
+            selected={selectedSector}
+            onSelect={(number) => {
+              setSelectedSector(number);
+              const sector = comparison.miniSectors.find(
+                (item) => item.number === number,
+              );
+              setHover(
+                sector
+                  ? (sector.startDistanceM + sector.endDistanceM) / 2
+                  : null,
+              );
+            }}
+          />
+          <div className="chart-toolbar">
+            <label>
+              <input
+                type="checkbox"
+                checked={showGear}
+                onChange={(event) => setShowGear(event.target.checked)}
+              />
+              Gear
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={showPedals}
+                onChange={(e) => setShowPedals(e.target.checked)}
+              />
+              Pedal traces
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={showMap}
+                onChange={(e) => setShowMap(e.target.checked)}
+              />
+              Track map
+            </label>
+            <label className="distance-control">
+              {hover === null ? "Inspect distance" : Math.round(hover) + " m"}
+              <input
+                aria-label="Inspect distance along the lap"
+                type="range"
+                min={0}
+                max={maxDistance}
+                step={comparison.settings.distanceStep}
+                value={hover ?? 0}
+                onChange={(e) => setHover(Number(e.target.value))}
+              />
+            </label>
+          </div>
+          {showMap && (
+            <TrackMap
+              comparison={comparison}
+              hoverDistance={hover}
+              onHover={setHover}
+            />
+          )}
+          <div className="chart-grid">
+            <ChartCard
+              {...shared}
+              title="Speed"
+              subtitle="Both laps on the same estimated distance axis."
+              unit="km/h"
+              series={chartSeries.speed}
+            />
+            <ChartCard
+              {...shared}
+              title="Cumulative time difference"
+              subtitle="Left minus right · + left loses time · − left gains time."
+              unit="ms"
+              centerZero
+              series={chartSeries.delta}
+            />
+            {showPedals && (
+              <>
+                <ChartCard
+                  {...shared}
+                  title="Throttle"
+                  subtitle="Throttle application along the lap."
+                  unit="%"
+                  series={chartSeries.throttle}
+                />
+                <ChartCard
+                  {...shared}
+                  title="Brake pedal"
+                  subtitle="Pressed or released; this is not brake pressure."
+                  unit="%"
+                  discrete
+                  series={chartSeries.brake}
+                />
+              </>
+            )}
+            {showGear && (
+              <ChartCard
+                {...shared}
+                title="Gear"
+                subtitle="Selected gear · held between samples; unavailable samples omitted."
+                unit="gear"
+                discrete
+                series={chartSeries.gear}
+              />
+            )}
+          </div>
+        </>
+      )}
+      {tab === "zones" && <CornerAnalysisPanel comparison={comparison} />}
+      {tab === "report" && <EngineerReportPanel comparison={comparison} />}
+      <details className="quality-note">
+        <summary>Data quality & calculation method</summary>
+        <p>
+          Start and finish are anchored to official lap times. Local differences
+          use interpolated telemetry, not independent timing measurements.
+        </p>
+        {comparison.quality.warnings.map((note) => (
+          <p key={note}>{note}</p>
+        ))}
+        <p>
+          Source samples: {comparison.quality.reference?.sourceSamples ?? "—"} /{" "}
+          {comparison.quality.target?.sourceSamples ?? "—"}. Largest gap:{" "}
+          {comparison.quality.reference?.maxGapMs ?? "—"} /{" "}
+          {comparison.quality.target?.maxGapMs ?? "—"} ms.
+        </p>
+      </details>
+    </>
+  );
 }

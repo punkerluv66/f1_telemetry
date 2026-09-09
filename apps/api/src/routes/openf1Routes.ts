@@ -4,8 +4,8 @@ import { z } from "zod";
 import { searchOpenF1Sessions } from "../lib/openf1.js";
 
 const querySchema = z.object({
-  year: z.coerce.number().optional(),
-  sessionName: z.string().optional()
+  year: z.coerce.number().int().positive().optional(),
+  sessionName: z.string().optional(),
 });
 
 export const openf1Routes = Router();
@@ -15,11 +15,11 @@ openf1Routes.get("/sessions", async (request, response, next) => {
     const query = querySchema.parse(request.query);
     const sessions = await searchOpenF1Sessions({
       year: query.year,
-      sessionName: query.sessionName ?? "Qualifying"
+      sessionName: query.sessionName ?? "Qualifying",
     });
 
     response.json({
-      sessions
+      sessions,
     });
   } catch (error) {
     next(error);

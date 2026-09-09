@@ -10,14 +10,17 @@
     "dev": "concurrently \"npm run dev -w @f1/api\" \"npm run dev -w @f1/web\"",
     "build": "npm run build -w @f1/api && npm run build -w @f1/web",
     "start": "npm run start -w @f1/api",
+    "profile:ui": "node scripts/profile-ui.mjs",
+    "profile:api": "node scripts/profile-api.mjs",
     "db:create": "powershell -ExecutionPolicy Bypass -File ./scripts/create-db.ps1",
-    "db:push": "npm run prisma:generate -w @f1/api && npm run prisma:push -w @f1/api",
-    "db:studio": "npm run prisma:studio -w @f1/api"
+    "db:push": "node scripts/database.mjs generate && node scripts/database.mjs db push",
+    "db:studio": "node scripts/database.mjs studio",
+    "db:migrate": "node scripts/database.mjs generate && node scripts/database.mjs migrate deploy"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.3"
   }
 }

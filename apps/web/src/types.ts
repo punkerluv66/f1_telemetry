@@ -216,7 +216,31 @@ export interface ReportItem {
   note: string;
 }
 
+export interface TelemetryQuality {
+  sourceSamples: number;
+  maxGapMs: number;
+  startGapMs: number;
+  endGapMs: number;
+  timingAnchored: boolean;
+}
+
+export interface MiniSector {
+  number: number;
+  startDistanceM: number;
+  endDistanceM: number;
+  referenceMs: number;
+  targetMs: number;
+  deltaMs: number;
+  winner: "reference" | "target" | "even";
+}
+
 export interface ComparisonResponse {
+  miniSectors: MiniSector[];
+  quality: {
+    warnings: string[];
+    reference: TelemetryQuality | null;
+    target: TelemetryQuality | null;
+  };
   session: {
     id: number;
     sessionKey: number;
@@ -229,6 +253,7 @@ export interface ComparisonResponse {
     distanceStep: number;
     smoothingWindow: number;
     payloadVersion: number;
+    deltaConvention: "reference-minus-target";
     normalizationMode: string;
     normalizationVersion: number;
   };
@@ -245,7 +270,8 @@ export interface ComparisonResponse {
       finalDeltaMs: number;
       bestTargetGainMs: number;
       biggestTargetLossMs: number;
-      winnerLapId: number;
+      winnerLapId: number | null;
+      officialDeltaMs: number;
     };
   };
   sectorAnalysis: {

@@ -1,9 +1,17 @@
 $ErrorActionPreference = "Stop"
 
-$dbName = "f1_telemetry_platform_ts"
-$hostName = "127.0.0.1"
-$userName = "postgres"
-$password = "1234"
+$configPath = Join-Path $PSScriptRoot "../.env"
+if (-not (Test-Path -LiteralPath $configPath)) { throw "Create .env from .env.example in the repository root first." }
+$configLine = Get-Content -LiteralPath $configPath | Where-Object { $_ -match '^DATABASE_URL=' } | Select-Object -First 1
+if (-not $configLine) { throw "DATABASE_URL is missing from .env." }
+$databaseUri = [Uri]($configLine.Substring(13).Trim().Trim('"').Trim("'"))
+$dbName = [Uri]::UnescapeDataString($databaseUri.AbsolutePath.TrimStart('/'))
+$hostName = $databaseUri.Host
+$portNumber = if ($databaseUri.Port -gt 0) { $databaseUri.Port } else { 5432 }
+$credentials = $databaseUri.UserInfo.Split(':', 2)
+$userName = [Uri]::UnescapeDataString($credentials[0])
+$password = if ($credentials.Length -gt 1) { [Uri]::UnescapeDataString($credentials[1]) } else { "" }
+if ($dbName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw "Database name must contain letters, digits and underscores only." }
 
 $env:PGPASSWORD = $password
 
@@ -30,12 +38,15 @@ if (-not (Get-Command $psqlPath -ErrorAction SilentlyContinue) -and -not (Test-P
     exit 1
 }
 
-$exists = & $psqlPath -h $hostName -U $userName -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$dbName';"
+$exists = & $psqlPath -h $hostName -p $portNumber -U $userName -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$dbName';"
 
-if ($exists -eq "1") {
+if ($LASTEXITCODE -ne 0) { throw "Could not connect to PostgreSQL. Check .env and the PostgreSQL service." }
+
+if (([string]$exists).Trim() -eq "1") {
   Write-Output "Database '$dbName' already exists."
   exit 0
 }
 
-& $psqlPath -h $hostName -U $userName -d postgres -c "CREATE DATABASE $dbName TEMPLATE template0;"
+& $psqlPath -h $hostName -p $portNumber -U $userName -d postgres -c "CREATE DATABASE $dbName TEMPLATE template0;"
+if ($LASTEXITCODE -ne 0) { throw "Database creation failed." }
 Write-Output "Database '$dbName' created."

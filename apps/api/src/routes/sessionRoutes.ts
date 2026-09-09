@@ -4,15 +4,15 @@ import { z } from "zod";
 import {
   getSessionOverview,
   importSessionMetadata,
-  listImportedSessions
+  listImportedSessions,
 } from "../services/sessionImportService.js";
 
 const importSchema = z.object({
-  sessionKey: z.coerce.number()
+  sessionKey: z.coerce.number().int().positive(),
 });
 
 const paramsSchema = z.object({
-  sessionId: z.coerce.number()
+  sessionId: z.coerce.number().int().positive(),
 });
 
 export const sessionRoutes = Router();

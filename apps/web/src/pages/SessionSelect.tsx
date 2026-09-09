@@ -1,200 +1,240 @@
-import { startTransition, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { getHealth, getImportedSessions, importSession, searchOpenF1Sessions } from "../lib/api";
+import { CardRail } from "../components/CardRail";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  getImportedSessions,
+  importSession,
+  searchOpenF1Sessions,
+} from "../lib/api";
 import { getErrorMessage } from "../lib/helpers";
-import type { ImportedSessionSummary, OpenF1SessionSearchResult } from "../types";
-
-const sessionTypeOptions = ["Race", "Qualifying", "Sprint", "Sprint Qualifying"] as const;
+import type {
+  ImportedSessionSummary,
+  OpenF1SessionSearchResult,
+} from "../types";
 
 export function SessionSelect() {
   const navigate = useNavigate();
-  const [health, setHealth] = useState<{ status: string; sessionsCount: number; lapsCount: number } | null>(null);
-  const [remoteYear, setRemoteYear] = useState(2025);
-  const [remoteSessionName, setRemoteSessionName] = useState<(typeof sessionTypeOptions)[number]>("Race");
-  const [remoteSessions, setRemoteSessions] = useState<OpenF1SessionSearchResult[]>([]);
-  const [importedSessions, setImportedSessions] = useState<ImportedSessionSummary[]>([]);
+  const [year, setYear] = useState(new Date().getFullYear() - 1);
+  const [kind, setKind] = useState("Qualifying");
+  const [sessions, setSessions] = useState<OpenF1SessionSearchResult[]>([]);
+  const [imported, setImported] = useState<ImportedSessionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [loadingRemote, setLoadingRemote] = useState(false);
-  const [loadingImportSessionKey, setLoadingImportSessionKey] = useState<number | null>(null);
-
+  const [searching, setSearching] = useState(false);
+  const [importing, setImporting] = useState<number | null>(null);
+  const [searched, setSearched] = useState(false);
+  const [loadingSaved, setLoadingSaved] = useState(true);
+  const searchRequest = useRef<AbortController | null>(null);
+  const importRequest = useRef<AbortController | null>(null);
   useEffect(() => {
-    void bootstrap();
+    const controller = new AbortController();
+    getImportedSessions(controller.signal)
+      .then((data) => {
+        if (!controller.signal.aborted) setImported(data.sessions);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setError(getErrorMessage(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingSaved(false);
+      });
+    return () => {
+      controller.abort();
+      searchRequest.current?.abort();
+      importRequest.current?.abort();
+    };
   }, []);
-
-  async function bootstrap() {
+  async function search() {
+    searchRequest.current?.abort();
+    const controller = new AbortController();
+    searchRequest.current = controller;
+    setSearching(true);
+    setError(null);
+    setSessions([]);
     try {
-      setError(null);
-      const [healthPayload, importedPayload] = await Promise.all([getHealth(), getImportedSessions()]);
-
-      startTransition(() => {
-        setHealth(healthPayload);
-        setImportedSessions(importedPayload.sessions);
-      });
-
-      await runRemoteSearch(remoteYear, remoteSessionName);
-    } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
-    }
-  }
-
-  async function runRemoteSearch(year: number, sessionName: string) {
-    try {
-      setLoadingRemote(true);
-      setError(null);
-      const payload = await searchOpenF1Sessions(year, sessionName);
-
-      startTransition(() => {
-        setRemoteSessions(payload.sessions);
-      });
-    } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      const data = await searchOpenF1Sessions(year, kind, controller.signal);
+      if (!controller.signal.aborted) {
+        setSessions(data.sessions);
+        setSearched(true);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) setError(getErrorMessage(error));
     } finally {
-      setLoadingRemote(false);
+      if (!controller.signal.aborted) setSearching(false);
     }
   }
-
-  async function handleImportSession(sessionKey: number) {
+  async function openSession(key: number) {
+    const saved = imported.find((session) => session.sessionKey === key);
+    if (saved) {
+      navigate("/session/" + saved.id);
+      return;
+    }
+    if (importRequest.current && !importRequest.current.signal.aborted) return;
+    const controller = new AbortController();
+    importRequest.current = controller;
+    setImporting(key);
+    setError(null);
     try {
-      setLoadingImportSessionKey(sessionKey);
-      setError(null);
-      const result = await importSession(sessionKey);
-      navigate(`/session/${result.sessionId}`);
-    } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      const result = await importSession(key, controller.signal);
+      if (!controller.signal.aborted) navigate("/session/" + result.sessionId);
+    } catch (error) {
+      if (!controller.signal.aborted) setError(getErrorMessage(error));
     } finally {
-      setLoadingImportSessionKey(null);
+      if (!controller.signal.aborted) setImporting(null);
+      if (importRequest.current === controller) importRequest.current = null;
     }
   }
-
   return (
     <div className="shell shell--full">
-      <main className="dashboard dashboard--wide session-page">
-        <section className="hero panel session-hero">
-          <p className="hero__eyebrow">Formula 1 Telemetry Platform</p>
-          <h2>Select a Session to Analyze</h2>
-          <p>
-            Search for a race or qualifying session from the OpenF1 API, import it,
-            and start analyzing telemetry data.
+      <main className="dashboard session-page">
+        <header className="page-header">
+          <div>
+            <p className="eyebrow">F1 / TELEMETRY</p>
+            <h1>Every lap tells a story.</h1>
+            <p className="muted">
+              Compare two laps. See where time is gained and lost.
+            </p>
+          </div>
+          <span className="app-mark">SESSION LIBRARY</span>
+        </header>
+        {error && (
+          <div role="alert" className="error-banner">
+            {error}
+          </div>
+        )}
+        {loadingSaved && (
+          <p role="status" className="muted">
+            Loading saved sessions…
           </p>
-          <div className="session-hero__metrics">
-            <div className="session-metric">
-              <strong>{health?.sessionsCount ?? 0}</strong>
-              <span>Imported sessions</span>
-            </div>
-            <div className="session-metric">
-              <strong>{health?.lapsCount ?? 0}</strong>
-              <span>Laps stored locally</span>
-            </div>
-            <div className="session-metric">
-              <strong>{remoteSessions.length}</strong>
-              <span>Search matches loaded</span>
-            </div>
-          </div>
-          {error ? <p className="error-banner">{error}</p> : null}
-        </section>
-
-        <section className="panel session-section">
-          <div className="session-section__header">
-            <div>
-              <h3 className="section-title">OpenF1 F1 Results</h3>
-              <p className="muted">Use a simple filter, then import the session you want to inspect.</p>
-            </div>
-            <p className="muted">Showing {remoteSessions.length} sessions</p>
-          </div>
-
-          <div className="session-filter-bar">
-            <div className="field session-filter">
-              <label>Year</label>
-              <input
-                type="number"
-                value={remoteYear}
-                onChange={(event) => setRemoteYear(Number(event.target.value))}
-              />
-            </div>
-            <div className="field session-filter session-filter--wide">
-              <label>Session type</label>
-              <select
-                value={remoteSessionName}
-                onChange={(event) => setRemoteSessionName(event.target.value as (typeof sessionTypeOptions)[number])}
-              >
-                {sessionTypeOptions.map((sessionType) => (
-                  <option value={sessionType} key={sessionType}>
-                    {sessionType}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="session-filter-bar__action">
-              <button
-                type="button"
-                onClick={() => void runRemoteSearch(remoteYear, remoteSessionName)}
-                disabled={loadingRemote}
-              >
-                {loadingRemote ? "Searching..." : "Find Sessions"}
-              </button>
-            </div>
-          </div>
-
-          <div className="session-card-rail">
-            {remoteSessions.length > 0 ? remoteSessions.map((session) => (
-              <article className="panel panel--dark session-card" key={session.session_key}>
-                <div className="session-card__content">
-                  <h3 className="session-card__title">{session.country_name}</h3>
-                  <p className="session-card__meta">{session.year} - {session.session_name}</p>
-                  <p className="session-card__circuit">{session.circuit_short_name}</p>
-                </div>
-                <div className="session-card__actions">
-                  <button
-                    type="button"
-                    onClick={() => void handleImportSession(session.session_key)}
-                    disabled={loadingImportSessionKey === session.session_key}
-                  >
-                    {loadingImportSessionKey === session.session_key ? "Importing..." : "Import & Select"}
-                  </button>
-                </div>
-              </article>
-            )) : (
-              <div className="session-empty">
-                <p className="muted">No sessions found for this query.</p>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {importedSessions.length > 0 ? (
+        )}
+        {imported.length > 0 && (
           <section className="panel session-section">
-            <div className="session-section__header">
-              <div>
-                <h3 className="section-title">Previously Imported Sessions</h3>
-                <p className="muted">Jump back into sessions already cached in your local database.</p>
-              </div>
-              <p className="muted">{importedSessions.length} sessions available</p>
+            <div className="section-header">
+              <h2>Your sessions</h2>
+              <span className="muted">{imported.length} saved locally</span>
             </div>
-
-            <div className="session-card-rail">
-              {importedSessions.map((session) => (
-                <article className="panel panel--dark session-card" key={session.id}>
-                  <div className="session-card__content">
-                    <h3 className="session-card__title">{session.countryName}</h3>
-                    <p className="session-card__meta">{session.year} - {session.sessionName}</p>
-                    <p className="session-card__circuit">{session.circuitShortName}</p>
-                    <p className="session-card__stats">
-                      {session._count.drivers} drivers - {session._count.laps} laps
-                    </p>
-                  </div>
-                  <div className="session-card__actions">
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/session/${session.id}`)}
-                    >
-                      Select
-                    </button>
-                  </div>
-                </article>
+            <CardRail label="saved sessions">
+              {imported.map((session) => (
+                <Link
+                  className="saved-session"
+                  key={session.id}
+                  to={"/session/" + session.id}
+                >
+                  <span className="eyebrow">
+                    {session.year} · {session.sessionName}
+                  </span>
+                  <h3>{session.countryName}</h3>
+                  <p className="muted">{session.circuitShortName}</p>
+                  <span className="session-badge">Saved locally</span>
+                  <span className="session-link">Choose drivers →</span>
+                </Link>
               ))}
-            </div>
+            </CardRail>
           </section>
-        ) : null}
+        )}
+        <section className="panel session-section">
+          <div className="section-header">
+            <div>
+              <h2>Find a session</h2>
+              <p className="muted">
+                Historical telemetry from OpenF1, available from 2023.
+              </p>
+            </div>
+          </div>
+          <form
+            className="search-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void search();
+            }}
+          >
+            <label htmlFor="year">
+              Season
+              <input
+                id="year"
+                type="number"
+                min={2023}
+                max={new Date().getFullYear()}
+                required
+                value={year}
+                onChange={(event) => setYear(Number(event.target.value))}
+              />
+            </label>
+            <label htmlFor="kind">
+              Session
+              <select
+                id="kind"
+                value={kind}
+                onChange={(event) => setKind(event.target.value)}
+              >
+                {["Qualifying", "Race", "Sprint", "Sprint Qualifying"].map(
+                  (value) => (
+                    <option key={value}>{value}</option>
+                  ),
+                )}
+              </select>
+            </label>
+            <button disabled={searching || importing !== null}>
+              {searching ? "Searching…" : "Find sessions"}
+            </button>
+          </form>
+          {importing !== null && (
+            <p className="loading-note" role="status">
+              Importing session metadata. This may take a moment.
+            </p>
+          )}
+          {sessions.length > 0 && (
+            <CardRail label="available sessions">
+              {sessions.map((session) => {
+                const saved = imported.some(
+                  (item) => item.sessionKey === session.session_key,
+                );
+                return (
+                  <article
+                    className="session-import-card"
+                    key={session.session_key}
+                  >
+                    <div>
+                      <p className="eyebrow">
+                        {session.year} · {session.session_name}
+                      </p>
+                      <h3>{session.country_name}</h3>
+                      <p className="muted">{session.circuit_short_name}</p>
+                    </div>
+                    <span
+                      className={"session-badge" + (saved ? " is-saved" : "")}
+                    >
+                      {saved ? "Saved locally" : "Available to import"}
+                    </span>
+                    <button
+                      className="button-secondary"
+                      disabled={importing !== null}
+                      onClick={() => void openSession(session.session_key)}
+                    >
+                      {importing === session.session_key
+                        ? "Importing…"
+                        : saved
+                          ? "Open"
+                          : "Import & open"}
+                    </button>
+                  </article>
+                );
+              })}
+            </CardRail>
+          )}
+          {!sessions.length && (
+            <p className="empty-state">
+              {searching
+                ? "Searching OpenF1…"
+                : searched
+                  ? "No sessions found. Try a different season or session type."
+                  : "Choose a season and session type to get started."}
+            </p>
+          )}
+        </section>
+        <p className="page-footnote">
+          Telemetry is loaded only for the laps you compare and cached for
+          future visits.
+        </p>
       </main>
     </div>
   );

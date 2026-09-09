@@ -1,63 +1,86 @@
 # Formula 1 Telemetry Platform
 
-Full-stack thesis project for importing, caching, aligning, and visualizing Formula 1 telemetry from the OpenF1 API.
+A compact thesis application for importing, caching and comparing historical Formula 1 laps from OpenF1.
 
-## Stack
+## Requirements
 
-- Backend: Express + TypeScript + Prisma
-- Database: PostgreSQL
-- Frontend: React + Vite + TypeScript
-- Data source: OpenF1
+- Node.js 20.3 or newer (Node.js 22/24 recommended)
+- PostgreSQL running locally or at the host configured in DATABASE_URL
 
-## Main Features
+## First launch (PowerShell)
 
-1. Search remote sessions from OpenF1
-2. Import session, driver, and lap metadata into PostgreSQL
-3. Lazily import telemetry for chosen laps only, so OpenF1 rate limits stay manageable
-4. Cache imported telemetry and computed lap comparisons in the database
-5. Align laps on a shared distance axis
-6. Compute delta time, smoothing, and braking-zone events
-7. Visualize the comparison in a React dashboard
-
-## Project Structure
-
-- `apps/api` - backend, Prisma schema, import pipeline, telemetry analysis
-- `apps/web` - React frontend
-- `docs` - thesis text and technical materials
-- `scripts/create-db.ps1` - creates the dedicated PostgreSQL database
-
-## Quick Start
+Run commands from the repository root:
 
 ```powershell
 npm install
+Copy-Item .env.example .env
+# Edit DATABASE_URL in .env to match your PostgreSQL credentials.
 npm run db:create
-npm run db:push
+npm run db:migrate
 npm run dev
 ```
 
-Frontend: [http://localhost:5173](http://localhost:5173)  
-Backend: [http://localhost:4000](http://localhost:4000)
+Do not overwrite an existing .env. It is ignored by Git. The API resolves the root .env by its file location, so npm workspaces do not change which configuration is loaded.
 
-## Database
+Frontend: http://localhost:5173 · API: http://localhost:4000/api/health
 
-The local environment is configured for:
+The example URL is a local development example, not a production credential. db:create reads it from .env and requires psql. If the database already exists, skip db:create. For an existing installation previously managed with db push, use npm run db:push to synchronize the schema; migrate deploy expects the initial migration to be unapplied to an empty database or explicitly baselined.
 
-- host: `127.0.0.1`
-- user: `postgres`
-- password: `1234`
-- database: `f1_telemetry_platform_ts`
+## Regular use
 
-These values are already placed in `.env`.
+```powershell
+npm run dev
+```
 
-## API Overview
+Browse the horizontal session cards or import a historical session from the search results. Choose two drivers from the vertically scrollable classification lists. Race and Sprint sessions show race pace and stint summaries immediately; lap selection follows below. Qualifying sessions go straight to lap selection. Fastest eligible laps are preselected, and Change drivers reopens the driver lists. Cached sessions can be opened without searching OpenF1. Initial telemetry loading is slower than later comparisons because upstream requests are queued.
 
-- `GET /api/health`
-- `GET /api/openf1/sessions?year=2024&sessionName=Qualifying`
-- `POST /api/import/session`
-- `GET /api/sessions`
-- `GET /api/sessions/:sessionId/overview`
-- `POST /api/analysis/compare`
+For a production build:
 
-## Import Strategy
+```powershell
+npm run build
+npm start
+```
 
-To respect OpenF1 limits, the system imports metadata immediately and telemetry on demand. When a user compares two laps, the backend fetches `car_data` and `location` only for those specific lap time windows, stores the result in PostgreSQL, and reuses it later.
+The API serves the compiled web application at http://localhost:4000. Restart dev processes after changing environment variables.
+
+## API
+
+- GET /api/health
+- GET /api/openf1/sessions?year=2025&sessionName=Qualifying
+- POST /api/sessions/import with { "sessionKey": 12345 }
+- GET /api/sessions
+- GET /api/sessions/:sessionId/overview
+- POST /api/analysis/compare with sessionId, referenceLapId, targetLapId, distanceStep (5–100 m) and smoothingWindow (odd, 1–21)
+
+Invalid inputs return 400, missing resources 404, unsuitable telemetry 422, upstream failures 502/503/504 and unavailable database 503. Overview requests only read stored data. Reimporting refreshes metadata atomically and invalidates affected caches.
+
+## Calculation method and limitations
+
+Telemetry is fetched with a one-second margin, deduplicated by timestamp and clipped to explicit official lap boundaries. Speed at the boundaries is interpolated where bracketing samples exist; short missing edges use the nearest sample. Missing edges over 750 ms and internal gaps over 2 s are rejected. Quality metadata accompanies each comparison.
+
+Distance is estimated by trapezoidal integration of speed. The comparison lap is scaled to the reference lap length, then interpolated onto a common grid including the finish. This is approximate distance alignment, not projection onto a surveyed circuit centerline. Start and finish times use official timing; endpoint agreement is therefore not an independent accuracy measurement. Interior delta accuracy depends on source sampling, gaps and alignment.
+
+A moving average smooths speed and throttle only. Brake is binary pedal state (0/100), not pressure; gear uses previous-value interpolation. Braking events are detected before visual smoothing. Numbered zones are detected braking regions, not official circuit corner numbers. Stint pace is descriptive and is not a tyre degradation model.
+
+Charts cache their geometry and use binary search for cursor sampling. Large SVG traces retain bucket endpoints and extrema at screen resolution; calculations and cursor values retain every sample. Reproducible profiling commands and measured results are described in [the profiling report](docs/performance-review.md). These local measurements are not a performance guarantee for every device. No automated test suite is included.
+
+The application is designed for one API process. Request queues and import locks are in memory. Horizontal scaling and live telemetry are outside its current scope.
+
+## Troubleshooting
+
+- Missing DATABASE_URL: create .env at the repository root and restart the API.
+- Database unavailable / missing tables: check credentials and run db:migrate for a fresh database, or db:push for an existing schema.
+- Vite ECONNREFUSED: the API must be running on port 4000; check its terminal output first.
+- OpenF1 busy or incomplete telemetry: retry later or choose another clean lap.
+
+## Delta and mini-sectors
+
+All signed deltas use left/reference minus right/comparison: positive means the left lap is slower, negative means it is faster. The same convention is used for the full lap, charts, official sectors, braking zones and exported report. Twenty equal-distance mini-sectors show estimated time spent in each section, not cumulative delta or official timing sectors. Selecting one highlights its distance range on the charts. Stint pace is available for Race and Sprint only.
+
+## Selection and profiling
+
+Race charts show recorded pit stops and tyre stint bands. Each lap selector can be filtered by stint. The same driver may be selected on both sides with different laps. The optional Gear chart uses step interpolation. Driver numbers, lap numbers, stint filters and valid analysis settings are kept in the URL; Copy selection link produces a reusable URL. Opening a link restores the selection; Compare laps explicitly starts analysis.
+
+The comparison endpoint also accepts `Accept: application/x-ndjson` to stream actual queued/loading/calculating stages followed by a result. Validation errors before the stream retain HTTP error statuses; errors after streaming starts are `type: error` records. Consumers must require a `type: result` record before considering a streamed request successful. The regular JSON endpoint remains available.
+
+Run `npm run profile:ui` for the standalone production-mode chart workload on port 4174. Run `npm run profile:api` against the production API on port 4001 (override with `PROFILE_URL`). See the report for the exact startup commands, scenarios and limitations.

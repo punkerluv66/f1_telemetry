@@ -7,3 +7,5 @@ apps/web/dist
 apps/api/dist
 apps/api/src/generated
 *.tsbuildinfo
+.profiling/
+package-lock.json

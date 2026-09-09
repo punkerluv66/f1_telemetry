@@ -1,0 +1,203 @@
+{
+  "recordedAt": "2026-09-09T09:30:12.322Z",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+  "viewport": {
+    "width": 1440,
+    "height": 1200
+  },
+  "devicePixelRatio": 1,
+  "hardwareConcurrency": 12,
+  "productionReact": true,
+  "synthetic": true,
+  "note": "Controlled shared-cursor state updates, not end-to-end pointer latency or INP. Two animation frames approximate a rendering opportunity, not a paint timestamp. Heap is browser-reported and GC-dependent; this is not proof of leak freedom.",
+  "beforeHeap": 33692724,
+  "afterHeap": 62952305,
+  "longTasksMs": [],
+  "results": [
+    {
+      "pointsPerLine": 1000,
+      "charts": 4,
+      "linesPerChart": 2,
+      "mountCommitMs": 22.4,
+      "mountTwoFramesMs": 47.4,
+      "cursorCommit": {
+        "n": 180,
+        "medianMs": 1.2,
+        "p95Ms": 1.9,
+        "maxMs": 7.5
+      },
+      "frameGaps": {
+        "n": 180,
+        "medianMs": 7.1,
+        "p95Ms": 16.67,
+        "maxMs": 20.8
+      },
+      "framesOver34ms": 0,
+      "heapBytes": 10037694
+    },
+    {
+      "pointsPerLine": 10000,
+      "charts": 4,
+      "linesPerChart": 2,
+      "mountCommitMs": 21.5,
+      "mountTwoFramesMs": 41.9,
+      "cursorCommit": {
+        "n": 180,
+        "medianMs": 1.1,
+        "p95Ms": 1.5,
+        "maxMs": 3.4
+      },
+      "frameGaps": {
+        "n": 180,
+        "medianMs": 7,
+        "p95Ms": 16.67,
+        "maxMs": 20.9
+      },
+      "framesOver34ms": 0,
+      "heapBytes": 13689328
+    },
+    {
+      "pointsPerLine": 50000,
+      "charts": 4,
+      "linesPerChart": 2,
+      "mountCommitMs": 26.3,
+      "mountTwoFramesMs": 32.6,
+      "cursorCommit": {
+        "n": 180,
+        "medianMs": 1.3,
+        "p95Ms": 2.5,
+        "maxMs": 4.3
+      },
+      "frameGaps": {
+        "n": 180,
+        "medianMs": 13.9,
+        "p95Ms": 20.9,
+        "maxMs": 41.7
+      },
+      "framesOver34ms": 1,
+      "heapBytes": 31551089
+    }
+  ],
+  "cycles": [
+    {
+      "cycle": 1,
+      "mountCommitMs": 9.1,
+      "heapBytes": 31551089,
+      "domNodes": 180
+    },
+    {
+      "cycle": 2,
+      "mountCommitMs": 8.3,
+      "heapBytes": 36933614,
+      "domNodes": 180
+    },
+    {
+      "cycle": 3,
+      "mountCommitMs": 10.6,
+      "heapBytes": 36933614,
+      "domNodes": 180
+    },
+    {
+      "cycle": 4,
+      "mountCommitMs": 10.5,
+      "heapBytes": 44150162,
+      "domNodes": 180
+    },
+    {
+      "cycle": 5,
+      "mountCommitMs": 12.9,
+      "heapBytes": 44150162,
+      "domNodes": 180
+    },
+    {
+      "cycle": 6,
+      "mountCommitMs": 11.6,
+      "heapBytes": 44442936,
+      "domNodes": 180
+    },
+    {
+      "cycle": 7,
+      "mountCommitMs": 11.2,
+      "heapBytes": 44442936,
+      "domNodes": 180
+    },
+    {
+      "cycle": 8,
+      "mountCommitMs": 7.7,
+      "heapBytes": 49818261,
+      "domNodes": 180
+    },
+    {
+      "cycle": 9,
+      "mountCommitMs": 11.6,
+      "heapBytes": 49818261,
+      "domNodes": 180
+    },
+    {
+      "cycle": 10,
+      "mountCommitMs": 8.4,
+      "heapBytes": 49818261,
+      "domNodes": 180
+    },
+    {
+      "cycle": 11,
+      "mountCommitMs": 9.9,
+      "heapBytes": 42767470,
+      "domNodes": 180
+    },
+    {
+      "cycle": 12,
+      "mountCommitMs": 11.3,
+      "heapBytes": 42767470,
+      "domNodes": 180
+    },
+    {
+      "cycle": 13,
+      "mountCommitMs": 9.7,
+      "heapBytes": 42767470,
+      "domNodes": 180
+    },
+    {
+      "cycle": 14,
+      "mountCommitMs": 8.5,
+      "heapBytes": 45593147,
+      "domNodes": 180
+    },
+    {
+      "cycle": 15,
+      "mountCommitMs": 12.9,
+      "heapBytes": 45593147,
+      "domNodes": 180
+    },
+    {
+      "cycle": 16,
+      "mountCommitMs": 11.9,
+      "heapBytes": 46044588,
+      "domNodes": 180
+    },
+    {
+      "cycle": 17,
+      "mountCommitMs": 10.5,
+      "heapBytes": 46044588,
+      "domNodes": 180
+    },
+    {
+      "cycle": 18,
+      "mountCommitMs": 14.9,
+      "heapBytes": 46886208,
+      "domNodes": 180
+    },
+    {
+      "cycle": 19,
+      "mountCommitMs": 8.8,
+      "heapBytes": 46886208,
+      "domNodes": 180
+    },
+    {
+      "cycle": 20,
+      "mountCommitMs": 11.8,
+      "heapBytes": 62952305,
+      "domNodes": 180
+    }
+  ]
+}

@@ -1,325 +1,417 @@
-import { useState, MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent } from "react";
 import type { DriverSessionSummary } from "../types";
 import { formatLapTime } from "../lib/formatters";
-
 type CleanLapPoint = {
   lapNumber: number;
   lapDuration: number;
   tyreCompound?: string | null;
   tyreAge?: number | null;
 };
-
-export function StintPerformancePanel(props: {
+const height = 350;
+const padding = { top: 42, right: 24, bottom: 100, left: 58 };
+const colours = ["#cf2f27", "#1d658a"];
+const tyreColour: Record<string, string> = {
+  SOFT: "#d4483e",
+  MEDIUM: "#e2b640",
+  HARD: "#d8d3cb",
+  INTERMEDIATE: "#5a9b68",
+  WET: "#548eb6",
+};
+export function StintPerformancePanel({
+  leftDriver,
+  rightDriver,
+}: {
   leftDriver: DriverSessionSummary;
   rightDriver: DriverSessionSummary;
 }) {
   const [hoverLap, setHoverLap] = useState<number | null>(null);
-
-  const leftSeries = getCleanLapSeries(props.leftDriver);
-  const rightSeries = getCleanLapSeries(props.rightDriver);
-  const allPoints = [...leftSeries, ...rightSeries];
-
-  if (allPoints.length < 2) {
-    return (
-      <section className="panel analysis-panel">
-        <div className="analysis-panel__header">
-          <div>
-            <p className="hero__eyebrow">Long-Run View</p>
-            <h3 className="section-title">Stint Pace Breakdown</h3>
-          </div>
-        </div>
-        <p className="muted">Not enough timed laps are available for a long-run or stint comparison.</p>
-      </section>
+  const [width, setWidth] = useState(1000);
+  const plot = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!plot.current) return;
+    const observer = new ResizeObserver((entries) =>
+      setWidth(Math.max(280, Math.round(entries[0].contentRect.width))),
+    );
+    observer.observe(plot.current);
+    return () => observer.disconnect();
+  }, []);
+  const drivers = useMemo(
+    () => [leftDriver, rightDriver],
+    [leftDriver, rightDriver],
+  );
+  const geometry = useMemo(() => {
+    const series = drivers.map(getCleanLapSeries);
+    const all = series.flat();
+    const lapNumbers = drivers.flatMap((driver) =>
+      driver.laps.map((lap) => lap.lapNumber),
+    );
+    const minLap = Math.min(...lapNumbers, 1),
+      maxLap = Math.max(...lapNumbers, 1);
+    const minValue = all.length
+      ? Math.min(...all.map((p) => p.lapDuration))
+      : 0;
+    const maxValue = all.length
+      ? Math.max(...all.map((p) => p.lapDuration))
+      : 1;
+    const ticks: number[] = [];
+    const step = Math.max(
+      1,
+      Math.ceil(
+        (maxLap - minLap) /
+          Math.max(2, Math.floor((width - padding.left - padding.right) / 90)),
+      ),
+    );
+    for (let lap = minLap; lap <= maxLap; lap += step) ticks.push(lap);
+    if (ticks.at(-1) !== maxLap) {
+      if (ticks.length > 1 && maxLap - ticks[ticks.length - 1] < step * 0.6)
+        ticks.pop();
+      ticks.push(maxLap);
+    }
+    return {
+      series,
+      minLap,
+      maxLap,
+      minValue,
+      maxValue,
+      ticks,
+      paths: series.map((points) =>
+        buildLine(
+          points,
+          width,
+          height,
+          padding,
+          minLap,
+          maxLap,
+          minValue,
+          maxValue,
+        ),
+      ),
+      byLap: series.map(
+        (points) => new Map(points.map((p) => [p.lapNumber, p])),
+      ),
+      stints: drivers.map((driver) =>
+        driver.stints.map((stint) => ({
+          ...stint,
+          ...buildStintStats(driver, stint.stintNumber),
+        })),
+      ),
+    };
+  }, [drivers, width]);
+  const { minLap, maxLap, minValue, maxValue } = geometry;
+  const x = (lap: number) => mapX(lap, width, padding, minLap, maxLap);
+  const y = (time: number) => mapY(time, height, padding, minValue, maxValue);
+  function move(event: PointerEvent<SVGSVGElement>) {
+    const matrix = event.currentTarget.getScreenCTM();
+    if (!matrix) return;
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
+      matrix.inverse(),
+    );
+    setHoverLap(
+      point.x >= padding.left && point.x <= width - padding.right
+        ? Math.max(
+            minLap,
+            Math.min(
+              maxLap,
+              Math.round(
+                minLap +
+                  ((point.x - padding.left) /
+                    (width - padding.left - padding.right)) *
+                    Math.max(1, maxLap - minLap),
+              ),
+            ),
+          )
+        : null,
     );
   }
-
-  const width = 1120;
-  const height = 280;
-  const padding = { top: 16, right: 24, bottom: 44, left: 52 };
-  const minLap = Math.min(...allPoints.map((point) => point.lapNumber));
-  const maxLap = Math.max(...allPoints.map((point) => point.lapNumber));
-  const minValue = Math.min(...allPoints.map((point) => point.lapDuration));
-  const maxValue = Math.max(...allPoints.map((point) => point.lapDuration));
-  const lapTicks = buildLapTicks(minLap, maxLap);
-
-  const handleMouseMove = (e: MouseEvent<SVGSVGElement>) => {
-    const svg = e.currentTarget;
-    const rect = svg.getBoundingClientRect();
-    const scaleX = width / rect.width;
-    const mouseX = (e.clientX - rect.left) * scaleX;
-    
-    const usableWidth = width - padding.left - padding.right;
-    const range = Math.max(maxLap - minLap, 1);
-    
-    let closestLap = minLap + Math.round(((mouseX - padding.left) / usableWidth) * range);
-    closestLap = Math.max(minLap, Math.min(maxLap, closestLap));
-
-    if (mouseX >= padding.left - 20 && mouseX <= width - padding.right + 20) {
-      setHoverLap(closestLap);
-    } else {
-      setHoverLap(null);
-    }
-  };
-
-  const leftHoverPoint = hoverLap !== null ? leftSeries.find(p => p.lapNumber === hoverLap) : null;
-  const rightHoverPoint = hoverLap !== null ? rightSeries.find(p => p.lapNumber === hoverLap) : null;
-
   return (
     <section className="panel analysis-panel">
       <div className="analysis-panel__header">
         <div>
-          <p className="hero__eyebrow">Long-Run View</p>
-          <h3 className="section-title">Stint Pace Breakdown</h3>
+          <p className="eyebrow">WHOLE RACE</p>
+          <h3>Lap times & tyre stints</h3>
         </div>
         <p className="muted">
-          X-axis is lap number, Y-axis is lap time. We use clean laps first, excluding pit-in and pit-out laps when possible.
+          Pit-in, pit-out and untimed laps create gaps. Pit markers show
+          recorded stops; tyre bands show stint ranges.
         </p>
       </div>
-
-      <div className="long-run-chart">
-        <svg 
-          viewBox={`0 0 ${width} ${height}`} 
-          role="img" 
-          aria-label="Stint pace chart"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={() => setHoverLap(null)}
-          style={{ cursor: "crosshair" }}
+      <div className="long-run-chart" ref={plot}>
+        <svg
+          viewBox={"0 0 " + width + " " + height}
+          role="img"
+          aria-label="Stint pace chart with pit stops and tyre compounds"
+          onPointerMove={move}
+          onPointerLeave={() => setHoverLap(null)}
         >
-          {Array.from({ length: 5 }).map((_, index) => {
-            const ratio = index / 4;
-            const y = padding.top + (height - padding.top - padding.bottom) * ratio;
-            const labelValue = maxValue - (maxValue - minValue) * ratio;
-
+          {[0, 1, 2, 3, 4].map((i) => {
+            const value = maxValue - ((maxValue - minValue) * i) / 4;
             return (
-              <g key={`grid-${index}`}>
+              <g key={i}>
                 <line
                   x1={padding.left}
-                  y1={y}
                   x2={width - padding.right}
-                  y2={y}
-                  stroke="rgba(20,20,20,0.1)"
+                  y1={y(value)}
+                  y2={y(value)}
+                  stroke="#ddd2c4"
                 />
                 <text
-                  x={padding.left - 10}
-                  y={y + 4}
+                  x={padding.left - 8}
+                  y={y(value) + 4}
                   textAnchor="end"
-                  fontSize="11"
-                  fill="rgba(20,20,20,0.58)"
+                  fontSize={11}
+                  fill="#73695f"
                 >
-                  {formatLapTime(labelValue)}
+                  {formatLapTime(value)}
                 </text>
               </g>
             );
           })}
-
-          {lapTicks.map((lap) => {
-            const x = mapX(lap, width, padding, minLap, maxLap);
-
-            return (
-              <g key={`lap-${lap}`}>
-                <line
-                  x1={x}
-                  y1={padding.top}
-                  x2={x}
-                  y2={height - padding.bottom}
-                  stroke="rgba(20,20,20,0.08)"
-                />
-                <text
-                  x={x}
-                  y={height - 14}
-                  textAnchor="middle"
-                  fontSize="11"
-                  fill="rgba(20,20,20,0.62)"
-                >
-                  L{lap}
-                </text>
-              </g>
-            );
-          })}
-
-          <line
-            x1={padding.left}
-            y1={height - padding.bottom}
-            x2={width - padding.right}
-            y2={height - padding.bottom}
-            stroke="rgba(20,20,20,0.16)"
-            strokeWidth={1}
-          />
-
-          <path
-            d={buildLine(leftSeries, width, height, padding, minLap, maxLap, minValue, maxValue)}
-            fill="none"
-            stroke={props.leftDriver.teamColour ? `#${props.leftDriver.teamColour}` : "#cf2f27"}
-            strokeWidth={3}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <path
-            d={buildLine(rightSeries, width, height, padding, minLap, maxLap, minValue, maxValue)}
-            fill="none"
-            stroke={props.rightDriver.teamColour ? `#${props.rightDriver.teamColour}` : "#1d4ed8"}
-            strokeWidth={3}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray="8 6"
-          />
-
-          {hoverLap !== null && (
-            <g style={{ pointerEvents: "none" }}>
+          {geometry.ticks.map((lap) => (
+            <g key={lap}>
               <line
-                x1={mapX(hoverLap, width, padding, minLap, maxLap)}
+                x1={x(lap)}
+                x2={x(lap)}
                 y1={padding.top}
-                x2={mapX(hoverLap, width, padding, minLap, maxLap)}
                 y2={height - padding.bottom}
-                stroke="rgba(207,47,39,0.34)"
-                strokeWidth={2}
-                strokeDasharray="4 6"
+                stroke="#e8dfd3"
               />
               <text
-                x={mapX(hoverLap, width, padding, minLap, maxLap)}
-                y={padding.top - 4}
+                x={x(lap)}
+                y={height - padding.bottom + 20}
                 textAnchor="middle"
-                fontSize="11"
-                fontWeight="bold"
-                fill="rgba(20,20,20,0.8)"
+                fontSize={11}
+                fill="#73695f"
               >
-                L{hoverLap}
+                L{lap}
               </text>
-
-              {leftHoverPoint && (
-                <circle
-                  cx={mapX(hoverLap, width, padding, minLap, maxLap)}
-                  cy={mapY(leftHoverPoint.lapDuration, height, padding, minValue, maxValue)}
-                  r={5}
-                  fill={props.leftDriver.teamColour ? `#${props.leftDriver.teamColour}` : "#cf2f27"}
-                  stroke="#fff"
-                  strokeWidth={2}
-                />
-              )}
-              {rightHoverPoint && (
-                <circle
-                  cx={mapX(hoverLap, width, padding, minLap, maxLap)}
-                  cy={mapY(rightHoverPoint.lapDuration, height, padding, minValue, maxValue)}
-                  r={5}
-                  fill={props.rightDriver.teamColour ? `#${props.rightDriver.teamColour}` : "#1d4ed8"}
-                  stroke="#fff"
-                  strokeWidth={2}
-                />
-              )}
+            </g>
+          ))}
+          {drivers.map((driver, side) => (
+            <g key={side}>
+              {driver.pitStops
+                .filter(
+                  (pit) =>
+                    pit.lapNumber !== null &&
+                    pit.lapNumber >= minLap &&
+                    pit.lapNumber <= maxLap,
+                )
+                .map((pit) => (
+                  <g key={pit.id}>
+                    <title>
+                      {driver.acronym + " pit stop on lap " + pit.lapNumber}
+                    </title>
+                    <line
+                      x1={x(pit.lapNumber!)}
+                      x2={x(pit.lapNumber!)}
+                      y1={padding.top}
+                      y2={height - padding.bottom}
+                      stroke={colours[side]}
+                      strokeOpacity={0.5}
+                      strokeDasharray="3 5"
+                    />
+                    <text
+                      x={x(pit.lapNumber!)}
+                      y={14 + side * 17}
+                      textAnchor="middle"
+                      fontSize={10}
+                      fill={colours[side]}
+                    >
+                      {driver.acronym + " PIT"}
+                    </text>
+                  </g>
+                ))}
+              <path
+                d={geometry.paths[side]}
+                fill="none"
+                stroke={colours[side]}
+                strokeWidth={2}
+                strokeLinejoin="round"
+                strokeDasharray={side === 1 ? "8 5" : undefined}
+              />
+              <text
+                x={0}
+                y={height - 43 + side * 25}
+                fill={colours[side]}
+                fontSize={11}
+              >
+                {driver.acronym}
+              </text>
+              {driver.stints.map((stint) => {
+                const start = x(Math.max(minLap, stint.lapStart - 0.5)),
+                  end = x(Math.min(maxLap, stint.lapEnd + 0.5));
+                return (
+                  <g key={stint.id}>
+                    <title>
+                      {driver.acronym +
+                        " stint " +
+                        stint.stintNumber +
+                        ": " +
+                        (stint.compound ?? "Unknown") +
+                        ", L" +
+                        stint.lapStart +
+                        "–" +
+                        stint.lapEnd}
+                    </title>
+                    <rect
+                      x={start}
+                      y={height - 55 + side * 25}
+                      width={Math.max(0, end - start - 2)}
+                      height={18}
+                      rx={3}
+                      fill={tyreColour[stint.compound ?? ""] ?? "#bba58c"}
+                    />
+                    {end - start > 45 && (
+                      <text
+                        x={(start + end) / 2}
+                        y={height - 42 + side * 25}
+                        textAnchor="middle"
+                        fill="#211e1a"
+                        fontSize={10}
+                      >
+                        {stint.compound ?? "?"}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          ))}
+          {hoverLap !== null && (
+            <g>
+              <line
+                x1={x(hoverLap)}
+                x2={x(hoverLap)}
+                y1={padding.top}
+                y2={height - padding.bottom}
+                stroke="#73695f"
+                strokeDasharray="4 4"
+              />
+              {geometry.byLap.map((points, side) => {
+                const point = points.get(hoverLap);
+                return (
+                  point && (
+                    <circle
+                      key={side}
+                      cx={x(hoverLap)}
+                      cy={y(point.lapDuration)}
+                      r={4}
+                      fill={colours[side]}
+                      stroke="white"
+                    />
+                  )
+                );
+              })}
             </g>
           )}
         </svg>
       </div>
-
-      <div className="legend">
-        <span className="legend__item">
-          <span className="legend__swatch" style={{ background: props.leftDriver.teamColour ? `#${props.leftDriver.teamColour}` : "#cf2f27" }} />
-          {props.leftDriver.acronym} clean laps {leftHoverPoint ? `(L${hoverLap}: ${formatLapTime(leftHoverPoint.lapDuration)}${leftHoverPoint.tyreCompound ? ` on ${leftHoverPoint.tyreCompound}` : ""}${leftHoverPoint.tyreAge !== null ? `, ${leftHoverPoint.tyreAge} laps old` : ""})` : ""}
-        </span>
-        <span className="legend__item">
-          <span className="legend__swatch" style={{ background: props.rightDriver.teamColour ? `#${props.rightDriver.teamColour}` : "#1d4ed8" }} />
-          {props.rightDriver.acronym} clean laps {rightHoverPoint ? `(L${hoverLap}: ${formatLapTime(rightHoverPoint.lapDuration)}${rightHoverPoint.tyreCompound ? ` on ${rightHoverPoint.tyreCompound}` : ""}${rightHoverPoint.tyreAge !== null ? `, ${rightHoverPoint.tyreAge} laps old` : ""})` : ""}
-        </span>
+      <div className="long-run-legend">
+        {drivers.map((driver, side) => (
+          <span key={side}>
+            <i
+              className={
+                "trace-dot trace-dot--" + (side ? "target" : "reference")
+              }
+            />
+            {driver.acronym}
+            {side ? " · dashed" : ""}
+            {hoverLap !== null
+              ? " · L" +
+                hoverLap +
+                ": " +
+                (geometry.byLap[side].has(hoverLap)
+                  ? formatLapTime(
+                      geometry.byLap[side].get(hoverLap)!.lapDuration,
+                    )
+                  : "excluded / unavailable")
+              : ""}
+          </span>
+        ))}
       </div>
-
       <p className="muted">
-        Each stint card shows the best clean lap, average clean lap, and the pace trend (the difference between the first and last clean lap of the stint). A pace improvement on old tyres usually means the lap-time gained from burning fuel outweighed the time lost to tyre degradation.
+        Pit stops:{" "}
+        {drivers
+          .map(
+            (driver) =>
+              driver.acronym +
+              " " +
+              (driver.pitStops.length
+                ? driver.pitStops
+                    .map((pit) =>
+                      pit.lapNumber === null
+                        ? "lap unavailable"
+                        : "L" + pit.lapNumber,
+                    )
+                    .join(", ")
+                : "none recorded"),
+          )
+          .join(" · ")}
       </p>
-
+      {geometry.series.flat().length < 2 && (
+        <p className="muted">
+          Not enough eligible timed laps to assess race pace.
+        </p>
+      )}
+      <details className="stint-method">
+        <summary>How to read this analysis</summary>
+        <p className="muted">
+          Lap times exclude pit-in, pit-out and untimed laps. First-to-last
+          change is descriptive: fuel, traffic, flags and track evolution are
+          not corrected. Tyre bands come from recorded stint ranges; a missing
+          timing sample is not necessarily a pit stop.
+        </p>
+      </details>
       <div className="stint-driver-grid">
-        <article className="stint-driver">
-          <div className="stint-driver__header">
-            <h4>{props.leftDriver.acronym}</h4>
-            <p>{props.leftDriver.fullName}</p>
-          </div>
-          <div className="stint-card-grid">
-            {props.leftDriver.stints.map((stint) => {
-              const stats = buildStintStats(props.leftDriver, stint.stintNumber);
-              return (
+        {drivers.map((driver, side) => (
+          <article className="stint-driver" key={side}>
+            <div className="stint-driver__header">
+              <h4>{driver.acronym}</h4>
+              <p>{driver.fullName}</p>
+            </div>
+            <div className="stint-card-grid">
+              {geometry.stints[side].map((stint) => (
                 <div className="stint-card" key={stint.id}>
-                  <p className="stint-card__title">{stint.compound ?? "Unknown"} stint</p>
-                  <p className="stint-card__meta">L{stint.lapStart} to L{stint.lapEnd}</p>
-                  <p className="stint-card__stats">
-                    Best {formatLapTime(stats.bestLap)} | Avg {formatLapTime(stats.averageLap)}
+                  <p className="stint-card__title">
+                    {stint.compound ?? "Unknown"} · stint {stint.stintNumber}
+                  </p>
+                  <p className="stint-card__meta">
+                    L{stint.lapStart} to L{stint.lapEnd}
                   </p>
                   <p className="stint-card__stats">
-                    Pace trend: {stats.degradation !== null ? (stats.degradation > 0 ? `Dropped off by ${stats.degradation.toFixed(3)} s` : `Improved by ${Math.abs(stats.degradation).toFixed(3)} s`) : "N/A"}
+                    Best {formatLapTime(stint.bestLap)} · Avg{" "}
+                    {formatLapTime(stint.averageLap)}
+                  </p>
+                  <p className="stint-card__stats">
+                    Last − first: {formatSignedSeconds(stint.degradation)}
                   </p>
                 </div>
-              );
-            })}
-          </div>
-        </article>
-
-        <article className="stint-driver">
-          <div className="stint-driver__header">
-            <h4>{props.rightDriver.acronym}</h4>
-            <p>{props.rightDriver.fullName}</p>
-          </div>
-          <div className="stint-card-grid">
-            {props.rightDriver.stints.map((stint) => {
-              const stats = buildStintStats(props.rightDriver, stint.stintNumber);
-              return (
-                <div className="stint-card" key={stint.id}>
-                  <p className="stint-card__title">{stint.compound ?? "Unknown"} stint</p>
-                  <p className="stint-card__meta">L{stint.lapStart} to L{stint.lapEnd}</p>
-                  <p className="stint-card__stats">
-                    Best {formatLapTime(stats.bestLap)} | Avg {formatLapTime(stats.averageLap)}
-                  </p>
-                  <p className="stint-card__stats">
-                    Pace trend: {stats.degradation !== null ? (stats.degradation > 0 ? `Dropped off by ${stats.degradation.toFixed(3)} s` : `Improved by ${Math.abs(stats.degradation).toFixed(3)} s`) : "N/A"}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </article>
+              ))}
+            </div>
+          </article>
+        ))}
       </div>
     </section>
   );
 }
-
-function buildLapTicks(minLap: number, maxLap: number) {
-  if (minLap === maxLap) {
-    return [minLap];
-  }
-
-  const range = Math.max(maxLap - minLap, 1);
-  const targetTickCount = Math.min(8, range + 1);
-  const step = Math.max(1, Math.ceil(range / targetTickCount));
-  const ticks: number[] = [];
-
-  for (let lap = minLap; lap <= maxLap; lap += step) {
-    ticks.push(lap);
-  }
-
-  if (ticks[ticks.length - 1] !== maxLap) {
-    ticks.push(maxLap);
-  }
-
-  return ticks;
-}
-
 function getCleanLapSeries(driver: DriverSessionSummary): CleanLapPoint[] {
   const cleanLaps = driver.laps
-    .filter((lap) => lap.lapDuration !== null && !lap.isPitOutLap && !lap.isPitLap)
+    .filter(
+      (lap) =>
+        lap.lapDuration !== null &&
+        lap.lapDuration > 0 &&
+        !lap.isPitOutLap &&
+        !lap.isPitLap,
+    )
+    .sort((a, b) => a.lapNumber - b.lapNumber)
     .map((lap) => ({
       lapNumber: lap.lapNumber,
       lapDuration: lap.lapDuration as number,
       tyreCompound: lap.tyreCompound,
-      tyreAge: lap.tyreAge
+      tyreAge: lap.tyreAge,
     }));
 
-  return cleanLaps.length > 0
-    ? cleanLaps
-    : driver.laps
-        .filter((lap) => lap.lapDuration !== null)
-        .map((lap) => ({
-          lapNumber: lap.lapNumber,
-          lapDuration: lap.lapDuration as number,
-          tyreCompound: lap.tyreCompound,
-          tyreAge: lap.tyreAge
-        }));
+  return cleanLaps;
 }
 
 function buildLine(
@@ -330,7 +422,7 @@ function buildLine(
   minLap: number,
   maxLap: number,
   minValue: number,
-  maxValue: number
+  maxValue: number,
 ) {
   if (points.length === 0) {
     return "";
@@ -340,7 +432,7 @@ function buildLine(
     .map((point, index) => {
       const x = mapX(point.lapNumber, width, padding, minLap, maxLap);
       const y = mapY(point.lapDuration, height, padding, minValue, maxValue);
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+      return `${index === 0 || point.lapNumber !== points[index - 1].lapNumber + 1 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
 }
@@ -350,7 +442,7 @@ function mapX(
   width: number,
   padding: { top: number; right: number; bottom: number; left: number },
   minLap: number,
-  maxLap: number
+  maxLap: number,
 ) {
   const usableWidth = width - padding.left - padding.right;
   const range = Math.max(maxLap - minLap, 1);
@@ -362,7 +454,7 @@ function mapY(
   height: number,
   padding: { top: number; right: number; bottom: number; left: number },
   minValue: number,
-  maxValue: number
+  maxValue: number,
 ) {
   const usableHeight = height - padding.top - padding.bottom;
   const range = Math.max(maxValue - minValue, 0.001);
@@ -372,21 +464,30 @@ function mapY(
 
 function buildStintStats(driver: DriverSessionSummary, stintNumber: number) {
   const stintLaps = driver.laps
-    .filter((lap) => lap.stint === stintNumber && lap.lapDuration !== null && !lap.isPitOutLap && !lap.isPitLap)
+    .filter(
+      (lap) =>
+        lap.stint === stintNumber &&
+        lap.lapDuration !== null &&
+        lap.lapDuration > 0 &&
+        !lap.isPitOutLap &&
+        !lap.isPitLap,
+    )
     .sort((left, right) => left.lapNumber - right.lapNumber);
   const lapDurations = stintLaps.map((lap) => lap.lapDuration as number);
   const bestLap = lapDurations.length > 0 ? Math.min(...lapDurations) : null;
-  const averageLap = lapDurations.length > 0
-    ? lapDurations.reduce((sum, lap) => sum + lap, 0) / lapDurations.length
-    : null;
-  const degradation = lapDurations.length > 1
-    ? lapDurations[lapDurations.length - 1] - lapDurations[0]
-    : null;
+  const averageLap =
+    lapDurations.length > 0
+      ? lapDurations.reduce((sum, lap) => sum + lap, 0) / lapDurations.length
+      : null;
+  const degradation =
+    lapDurations.length > 1
+      ? lapDurations[lapDurations.length - 1] - lapDurations[0]
+      : null;
 
   return {
     bestLap,
     averageLap,
-    degradation
+    degradation,
   };
 }
 

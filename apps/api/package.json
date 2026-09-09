@@ -6,9 +6,9 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push",
-    "prisma:studio": "prisma studio"
+    "prisma:generate": "node ../../scripts/database.mjs generate",
+    "prisma:push": "node ../../scripts/database.mjs db push",
+    "prisma:studio": "node ../../scripts/database.mjs studio"
   },
   "prisma": {
     "schema": "./prisma/schema.prisma"
