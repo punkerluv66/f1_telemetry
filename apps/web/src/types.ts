@@ -237,6 +237,20 @@ export interface MiniSector {
 export interface ComparisonResponse {
   miniSectors: MiniSector[];
   quality: {
+    sectorAlignment: {
+      mode: "lap-scaled" | "sector-anchored";
+      reason: string | null;
+      anchors: Array<{
+        sector: number;
+        distanceM: number;
+        referenceTimeMs: number;
+        targetTimeMs: number;
+        officialDeltaMs: number;
+        unanchoredDeltaMs: number;
+      }>;
+      referenceSegmentScaleFactors: number[];
+      targetSegmentScaleFactors: number[];
+    };
     warnings: string[];
     reference: TelemetryQuality | null;
     target: TelemetryQuality | null;

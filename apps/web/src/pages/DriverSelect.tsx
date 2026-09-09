@@ -925,8 +925,10 @@ function ComparisonView({ comparison }: { comparison: ComparisonResponse }) {
       <details className="quality-note">
         <summary>Data quality & calculation method</summary>
         <p>
-          Start and finish are anchored to official lap times. Local differences
-          use interpolated telemetry, not independent timing measurements.
+          {comparison.quality.sectorAlignment.mode === "sector-anchored"
+            ? "Start, sector boundaries and finish are anchored to official timing. Agreement at these points is enforced by the calculation."
+            : "Only start and finish are anchored to official lap times."}{" "}
+          Between these points, differences remain telemetry estimates.
         </p>
         {comparison.quality.warnings.map((note) => (
           <p key={note}>{note}</p>

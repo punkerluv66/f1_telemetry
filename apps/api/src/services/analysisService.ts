@@ -12,6 +12,7 @@ type LapContext = Lap & {
 };
 
 type ComparablePoint = {
+  timingAnchor?: boolean;
   distanceM: number;
   timeOffsetMs: number;
   speedKph: number;
@@ -86,11 +87,10 @@ type DeltaPoint = {
   deltaMs: number;
 };
 
-const COMPARISON_PAYLOAD_VERSION = 8;
+const COMPARISON_PAYLOAD_VERSION = 9;
 const TELEMETRY_VERSION = 3;
 const telemetryImports = new Map<number, Promise<LapContext>>();
-const DISTANCE_NORMALIZATION_VERSION = 3;
-const DISTANCE_NORMALIZATION_MODE = "integrated-distance-scaled";
+const DISTANCE_NORMALIZATION_VERSION = 4;
 
 export function ensureLapTelemetryImported(lapId: number) {
   const existing = telemetryImports.get(lapId);
@@ -306,10 +306,11 @@ async function compareLapsImpl(
   ]);
 
   onProgress?.("calculating");
-  const normalizedReference = normalizeTelemetry(referenceLap.telemetryPoints);
-  const normalizedTarget = normalizeTelemetry(targetLap.telemetryPoints, {
-    scaleToDistanceM: normalizedReference.normalizedLapLengthM,
-  });
+  const {
+    reference: normalizedReference,
+    target: normalizedTarget,
+    sectorAlignment,
+  } = normalizeComparisonTelemetry(referenceLap, targetLap);
   const commonDistance = Math.min(
     normalizedReference.normalizedLapLengthM,
     normalizedTarget.normalizedLapLengthM,
@@ -320,12 +321,14 @@ async function compareLapsImpl(
     distanceStep: params.distanceStep,
     smoothingWindow: params.smoothingWindow,
     maxDistance: commonDistance,
+    anchorDistances: sectorAlignment.anchors.map((anchor) => anchor.distanceM),
   });
   const targetAligned = alignTelemetry({
     points: normalizedTarget.points,
     distanceStep: params.distanceStep,
     smoothingWindow: params.smoothingWindow,
     maxDistance: commonDistance,
+    anchorDistances: sectorAlignment.anchors.map((anchor) => anchor.distanceM),
   });
   const deltaPoints: DeltaPoint[] = referenceAligned.map((point, index) => ({
     distanceM: point.distanceM,
@@ -333,8 +336,8 @@ async function compareLapsImpl(
   }));
 
   const miniSectors = buildMiniSectors(
-    referenceAligned,
-    targetAligned,
+    normalizedReference.points,
+    normalizedTarget.points,
     commonDistance,
   );
 
@@ -363,8 +366,9 @@ async function compareLapsImpl(
     ((referenceLap.lapDuration ?? 0) - (targetLap.lapDuration ?? 0)) * 1000,
   );
   const qualityWarnings = [
-    "Distance is estimated from speed and scaled to the reference lap; positions are approximate.",
-    ...(Math.abs(normalizedTarget.scaleFactor - 1) > 0.03
+    "Distance is estimated from speed on a shared axis; positions and interior mini-sector times remain approximate.",
+    ...(sectorAlignment.reason ? [sectorAlignment.reason] : []),
+    ...(Math.abs(normalizedReference.rawLapLengthM / normalizedTarget.rawLapLengthM - 1) > 0.03
       ? [
           "Estimated lap lengths differ by more than 3%; local delta interpretation is uncertain.",
         ]
@@ -397,7 +401,7 @@ async function compareLapsImpl(
       smoothingWindow: params.smoothingWindow,
       payloadVersion: COMPARISON_PAYLOAD_VERSION,
       deltaConvention: "reference-minus-target",
-      normalizationMode: DISTANCE_NORMALIZATION_MODE,
+      normalizationMode: sectorAlignment.mode,
       normalizationVersion: DISTANCE_NORMALIZATION_VERSION,
     },
     referenceLap: referencePayload,
@@ -413,6 +417,7 @@ async function compareLapsImpl(
     sectorAnalysis,
     cornerAnalysis,
     quality: {
+      sectorAlignment,
       warnings: qualityWarnings,
       reference: referenceLap.telemetryQuality,
       target: targetLap.telemetryQuality,
@@ -422,7 +427,7 @@ async function compareLapsImpl(
       exportMarkdown:
         report.exportMarkdown +
         buildMiniSectorMarkdown(miniSectors, referencePayload, targetPayload) +
-        `\n\n## Method and settings\nDistance step: ${params.distanceStep} m; smoothing: ${params.smoothingWindow} source samples.\nTime boundaries are anchored to official lap timing; interior delta is estimated.\n${qualityWarnings.join("\n")}`,
+        `\n\n## Method and settings\nDistance step: ${params.distanceStep} m; smoothing: ${params.smoothingWindow} source samples.\n${sectorAlignment.mode === "sector-anchored" ? "Distance is aligned piecewise at official sector times. Agreement at these anchors is enforced, not independent validation." : "Only start and finish are anchored to official lap timing."}\nMini-sectors use source telemetry, independently of the display grid and smoothing. Interior delta remains estimated.\n${qualityWarnings.join("\n")}`,
     },
   };
 
@@ -740,18 +745,141 @@ function normalizeTelemetry(
   const scaledPoints = deduplicateComparablePoints(
     normalized.map((point) => ({
       ...point,
-      distanceM: round(point.distanceM * scaleFactor),
+      distanceM: roundDistance(point.distanceM * scaleFactor),
     })),
   );
 
   return {
     points: scaledPoints,
     rawLapLengthM: round(rawLapLengthM),
-    normalizedLapLengthM: round(
+    normalizedLapLengthM: roundDistance(
       scaledPoints[scaledPoints.length - 1]?.distanceM ?? 0,
     ),
     scaleFactor,
     firstSampleOffsetMs: round(normalized[0]?.timeOffsetMs ?? 0),
+  };
+}
+
+type TimedTelemetryLap = Pick<Lap,
+  "lapDuration" | "durationSector1" | "durationSector2" | "durationSector3"
+> & { telemetryPoints: TelemetryPoint[] };
+
+// A time anchor splits a source interval without changing its measured channels.
+function pointAtTime(points: ComparablePoint[], timeMs: number): ComparablePoint {
+  let left = 0, right = points.length - 1;
+  while (left + 1 < right) {
+    const mid = Math.floor((left + right) / 2);
+    if (points[mid].timeOffsetMs <= timeMs) left = mid;
+    else right = mid;
+  }
+  const a = points[left], b = points[right];
+  const ratio = Math.max(0, Math.min(1,
+    (timeMs - a.timeOffsetMs) / (b.timeOffsetMs - a.timeOffsetMs)));
+  return {
+    ...a,
+    timeOffsetMs: timeMs,
+    distanceM: interpolate(a.distanceM, b.distanceM, ratio),
+    speedKph: interpolate(a.speedKph, b.speedKph, ratio),
+    throttlePct: interpolate(a.throttlePct, b.throttlePct, ratio),
+    brakePct: ratio >= 1 ? b.brakePct : a.brakePct,
+    gear: ratio >= 1 ? b.gear : a.gear,
+    rpm: interpolateNullable(a.rpm, b.rpm, ratio),
+    x: interpolateNullable(a.x, b.x, ratio),
+    y: interpolateNullable(a.y, b.y, ratio),
+    timingAnchor: true,
+  };
+}
+
+function officialTimingAnchors(lap: TimedTelemetryLap, points: ComparablePoint[]) {
+  const sectors = [lap.durationSector1, lap.durationSector2, lap.durationSector3];
+  if (!lap.lapDuration || sectors.some((t) => t === null || !Number.isFinite(t) || t <= 0))
+    return null;
+  const [s1, s2, s3] = sectors as number[];
+  // Three millisecond rounding tolerance, not an estimate of telemetry accuracy.
+  if (Math.abs((s1 + s2 + s3 - lap.lapDuration) * 1000) > 3.001)
+    return null;
+  const times = [0, round(s1 * 1000), round((s1 + s2) * 1000), round(lap.lapDuration * 1000)];
+  if (points.length < 2 || Math.abs(points[0].timeOffsetMs) > 0.001 ||
+      Math.abs(points[points.length - 1].timeOffsetMs - times[3]) > 0.001 ||
+      points.some((p, i) => !Number.isFinite(p.distanceM) || !Number.isFinite(p.timeOffsetMs) ||
+        (i > 0 && (p.distanceM <= points[i - 1].distanceM || p.timeOffsetMs <= points[i - 1].timeOffsetMs))))
+    return null;
+  const anchors = times.map((t) => pointAtTime(points, t));
+  if (anchors.some((p, i) => i > 0 &&
+      (p.timeOffsetMs <= anchors[i - 1].timeOffsetMs || p.distanceM - anchors[i - 1].distanceM < 1)))
+    return null;
+  return anchors;
+}
+
+function normalizeComparisonTelemetry(leftLap: TimedTelemetryLap, rightLap: TimedTelemetryLap) {
+  for (const lap of [leftLap, rightLap]) {
+    if (lap.telemetryPoints.some((p, i) =>
+      !Number.isFinite(p.timeOffsetMs) || !Number.isFinite(p.distanceM) ||
+      (i > 0 && p.timeOffsetMs <= lap.telemetryPoints[i - 1].timeOffsetMs))) {
+      throw new HttpError(422, "Telemetry has invalid or non-increasing timestamps. Reimport the lap before comparing.");
+    }
+  }
+  const leftRaw = normalizeTelemetry(leftLap.telemetryPoints);
+  const rightRaw = normalizeTelemetry(rightLap.telemetryPoints);
+  // Symmetric axis: swapping the two laps changes only the sign of the delta.
+  const commonLength = roundDistance((leftRaw.rawLapLengthM + rightRaw.rawLapLengthM) / 2);
+  const reference = normalizeTelemetry(leftLap.telemetryPoints, { scaleToDistanceM: commonLength });
+  const target = normalizeTelemetry(rightLap.telemetryPoints, { scaleToDistanceM: commonLength });
+  const fallback = (reason: string) => ({ reference, target, sectorAlignment: {
+    mode: "lap-scaled" as "lap-scaled" | "sector-anchored",
+    reason: reason as string | null,
+    anchors: [] as Array<{ sector: number; distanceM: number; referenceTimeMs: number;
+      targetTimeMs: number; officialDeltaMs: number; unanchoredDeltaMs: number }>,
+    referenceSegmentScaleFactors: [] as number[],
+    targetSegmentScaleFactors: [] as number[],
+  } });
+  const leftAnchors = officialTimingAnchors(leftLap, reference.points);
+  const rightAnchors = officialTimingAnchors(rightLap, target.points);
+  if (!leftAnchors || !rightAnchors)
+    return fallback("Sector alignment unavailable: both laps need complete, consistent sector timing and monotonic telemetry. Only lap boundaries are anchored.");
+  const distances = leftAnchors.map((p, i) =>
+    i === 3 ? commonLength : roundDistance((p.distanceM + rightAnchors[i].distanceM) / 2));
+  const factors = (anchors: ComparablePoint[]) => anchors.slice(1).map((p, i) =>
+    (distances[i + 1] - distances[i]) / (p.distanceM - anchors[i].distanceM));
+  const leftFactors = factors(leftAnchors), rightFactors = factors(rightAnchors);
+  // Reject implausibly large warps instead of hiding inconsistent input by force.
+  // This 10% guard is a plausibility rule, not a confidence interval.
+  if ([...leftFactors, ...rightFactors].some((f) => !Number.isFinite(f) || Math.abs(f - 1) > 0.1))
+    return fallback("Sector alignment rejected: a sector needs more than 10% additional distance scaling. Only lap boundaries are anchored; local comparison is uncertain.");
+  const warp = (normalized: NormalizedTelemetry, anchors: ComparablePoint[], scales: number[]) => {
+    let segment = 0;
+    const originals = normalized.points.map((p) => {
+      while (segment < 2 && p.timeOffsetMs > anchors[segment + 1].timeOffsetMs) segment++;
+      return { ...p, distanceM: distances[segment] +
+        (p.distanceM - anchors[segment].distanceM) * scales[segment] };
+    });
+    // Explicit breakpoints prevent interpolation across two different sector scales.
+    const points = originals.filter((p) => !anchors.some((a) => a.timeOffsetMs === p.timeOffsetMs));
+    anchors.forEach((a, i) => {
+      const original = normalized.points.find((p) => p.timeOffsetMs === a.timeOffsetMs);
+      points.push({ ...(original ?? a), distanceM: distances[i] });
+    });
+    points.sort((a, b) => a.timeOffsetMs - b.timeOffsetMs);
+    return { ...normalized, points };
+  };
+  return {
+    reference: warp(reference, leftAnchors, leftFactors),
+    target: warp(target, rightAnchors, rightFactors),
+    sectorAlignment: {
+      mode: "sector-anchored" as const,
+      reason: null,
+      anchors: leftAnchors.slice(1, 3).map((p, i) => ({
+        sector: i + 1,
+        distanceM: distances[i + 1],
+        referenceTimeMs: p.timeOffsetMs,
+        targetTimeMs: rightAnchors[i + 1].timeOffsetMs,
+        officialDeltaMs: round(p.timeOffsetMs - rightAnchors[i + 1].timeOffsetMs),
+        unanchoredDeltaMs: round(timeAtDistance(reference.points, distances[i + 1]) -
+          timeAtDistance(target.points, distances[i + 1])),
+      })),
+      referenceSegmentScaleFactors: leftFactors,
+      targetSegmentScaleFactors: rightFactors,
+    },
   };
 }
 
@@ -760,6 +888,7 @@ function alignTelemetry(params: {
   distanceStep: number;
   smoothingWindow: number;
   maxDistance: number;
+  anchorDistances?: number[];
 }) {
   if (params.points.length < 2 || params.maxDistance <= 0)
     throw new HttpError(422, "Not enough distance samples to compare.");
@@ -774,8 +903,10 @@ function alignTelemetry(params: {
     { length: Math.ceil(params.maxDistance / params.distanceStep) },
     (_, index) => index * params.distanceStep,
   );
-  grid.push(params.maxDistance);
-  for (const distance of grid) {
+  grid.push(params.maxDistance, ...(params.anchorDistances ?? []));
+  // Round before de-duplicating so a near-grid anchor cannot create duplicate X values.
+  const distances = [...new Set(grid.map((d) => roundDistance(d)))].sort((a, b) => a - b);
+  for (const distance of distances) {
     while (
       leftIndex < smoothed.length - 2 &&
       smoothed[leftIndex + 1].distanceM < distance
@@ -789,7 +920,7 @@ function alignTelemetry(params: {
     if (left.distanceM === right.distanceM) {
       aligned.push({
         ...left,
-        distanceM: round(distance),
+        distanceM: roundDistance(distance),
       });
       continue;
     }
@@ -803,7 +934,7 @@ function alignTelemetry(params: {
     );
 
     aligned.push({
-      distanceM: round(distance),
+      distanceM: roundDistance(distance),
       timeOffsetMs: round(
         interpolate(left.timeOffsetMs, right.timeOffsetMs, ratio),
       ),
@@ -823,6 +954,16 @@ function alignTelemetry(params: {
 }
 
 function smoothComparablePoints(points: ComparablePoint[], windowSize: number) {
+  if (points.some((p) => p.timingAnchor)) {
+    // Inserted sector anchors are not extra sensor samples in the smoothing window.
+    const source = smoothComparablePoints(points.filter((p) => !p.timingAnchor), windowSize);
+    let index = 0;
+    return points.map((p): ComparablePoint => {
+      if (!p.timingAnchor) return source[index++];
+      const channels = pointAtTime(source, p.timeOffsetMs);
+      return { ...p, speedKph: channels.speedKph, throttlePct: channels.throttlePct };
+    });
+  }
   const radius = Math.max(0, Math.floor(windowSize / 2));
 
   return points.map((point, index) => {
@@ -1592,6 +1733,11 @@ function interpolateNullable(
 
 function round(value: number) {
   return Math.round(value * 10) / 10;
+}
+
+// Keep distance transforms precise; rounding to decimetres here adds timing error.
+function roundDistance(value: number) {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
 function roundNullable(value: number | null) {

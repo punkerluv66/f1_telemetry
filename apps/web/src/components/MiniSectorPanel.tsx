@@ -97,7 +97,11 @@ export function MiniSectorPanel({
         </div>
       ) : (
         <p className="muted mini-help">
-          20 equal-distance sections, estimated from telemetry. Select a section
+          20 equal-distance sections, estimated from telemetry.{" "}
+          {comparison.quality.sectorAlignment.mode === "sector-anchored"
+            ? "Aligned to official sector timing; times within sectors remain approximate. "
+            : "Official sector alignment unavailable; only lap boundaries are anchored. "}
+          Select a section
           to inspect its time difference.
         </p>
       )}
