@@ -4,9 +4,9 @@ A web application for importing, caching and comparing historical Formula 1 laps
 
 ## Screenshot
 
-![Session library](screenshots/session-library.png)
+![Session search with season, session type and circuit filters](screenshots/session-search.png)
 
-The screenshot shows a local installation with previously saved sessions. A fresh database starts empty.
+The screenshot shows the full-width session search with circuit/country filtering and import status. Saved sessions are available in a separate view. A fresh database starts empty.
 
 ## Requirements
 
