@@ -10,7 +10,7 @@ import dotenv from "dotenv";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 dotenv.config({ path: path.join(root, ".env"), quiet: true });
-const output = path.join(root, "docs/profiling");
+const output = path.join(root, ".profiling/results");
 const scratch = path.join(root, ".profiling");
 await mkdir(output, { recursive: true });
 await mkdir(scratch, { recursive: true });

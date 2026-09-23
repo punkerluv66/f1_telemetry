@@ -8,4 +8,10 @@ apps/api/dist
 apps/api/src/generated
 *.tsbuildinfo
 .profiling/
-package-lock.json
+
+# Local writing and generated profiling results are not repository deliverables.
+/docs/
+/important/
+/private/
+/*engineering-review*.md
+*.docx
