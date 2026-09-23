@@ -23,7 +23,6 @@ export function MiniSectorPanel({
     <section className="panel mini-panel" aria-label="Mini-sector analysis">
       <div className="mini-heading">
         <div>
-          <p className="eyebrow">WHERE TIME CHANGES</p>
           <h3>Mini-sectors</h3>
         </div>
         <div className="mini-legend">

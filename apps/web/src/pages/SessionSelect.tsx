@@ -1,4 +1,3 @@
-import { CardRail } from "../components/CardRail";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -23,6 +22,12 @@ export function SessionSelect() {
   const [importing, setImporting] = useState<number | null>(null);
   const [searched, setSearched] = useState(false);
   const [loadingSaved, setLoadingSaved] = useState(true);
+  const [view, setView] = useState<"saved" | "archive">("saved");
+  const [query, setQuery] = useState("");
+  const filteredSessions = sessions.filter((session) =>
+    `${session.country_name} ${session.circuit_short_name}`
+      .toLowerCase().includes(query.trim().toLowerCase()),
+  );
   const searchRequest = useRef<AbortController | null>(null);
   const importRequest = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -50,6 +55,7 @@ export function SessionSelect() {
     setSearching(true);
     setError(null);
     setSessions([]);
+    setQuery("");
     try {
       const data = await searchOpenF1Sessions(year, kind, controller.signal);
       if (!controller.signal.aborted) {
@@ -88,13 +94,12 @@ export function SessionSelect() {
       <main className="dashboard session-page">
         <header className="page-header">
           <div>
-            <p className="eyebrow">F1 / TELEMETRY</p>
-            <h1>Every lap tells a story.</h1>
+            <p className="eyebrow">Your workspace</p>
+            <h1>Session library</h1>
             <p className="muted">
-              Compare two laps. See where time is gained and lost.
+              Select a session to compare drivers and laps.
             </p>
           </div>
-          <span className="app-mark">SESSION LIBRARY</span>
         </header>
         {error && (
           <div role="alert" className="error-banner">
@@ -106,13 +111,21 @@ export function SessionSelect() {
             Loading saved sessions…
           </p>
         )}
-        {imported.length > 0 && (
-          <section className="panel session-section">
+        <nav className="library-navigation" aria-label="Session library views">
+          <button type="button" aria-pressed={view === "saved"} onClick={() => setView("saved")}>
+            Saved sessions <span>{imported.length}</span>
+          </button>
+          <button type="button" aria-pressed={view === "archive"} onClick={() => setView("archive")}>
+            Find a session
+          </button>
+        </nav>
+        <div className="session-browser">
+          <section hidden={view !== "saved"} className="panel session-section library-saved">
             <div className="section-header">
-              <h2>Your sessions</h2>
+              <div><h2>Ready to analyse</h2><p className="muted">Open a session and select your driver pair.</p></div>
               <span className="muted">{imported.length} saved locally</span>
             </div>
-            <CardRail label="saved sessions">
+            <div className="session-register" role="region" aria-label="saved sessions">
               {imported.map((session) => (
                 <Link
                   className="saved-session"
@@ -122,21 +135,20 @@ export function SessionSelect() {
                   <span className="eyebrow">
                     {session.year} · {session.sessionName}
                   </span>
-                  <h3>{session.countryName}</h3>
-                  <p className="muted">{session.circuitShortName}</p>
-                  <span className="session-badge">Saved locally</span>
-                  <span className="session-link">Choose drivers →</span>
+                  <h3>{session.circuitShortName}</h3>
+                  <p className="muted">{session.countryName}</p>
+                  <span className="session-link">Analyse <span aria-hidden="true">↗</span></span>
                 </Link>
               ))}
-            </CardRail>
+            </div>
+            {!loadingSaved && imported.length === 0 && <div className="library-empty"><p>Your library is empty.</p><button type="button" onClick={() => setView("archive")}>Find your first session</button></div>}
           </section>
-        )}
-        <section className="panel session-section">
+        <section hidden={view !== "archive"} className="panel session-section library-import">
           <div className="section-header">
             <div>
               <h2>Find a session</h2>
               <p className="muted">
-                Historical telemetry from OpenF1, available from 2023.
+                Search the OpenF1 archive. Coverage starts in 2023.
               </p>
             </div>
           </div>
@@ -149,15 +161,15 @@ export function SessionSelect() {
           >
             <label htmlFor="year">
               Season
-              <input
+              <select
                 id="year"
-                type="number"
-                min={2023}
-                max={new Date().getFullYear()}
                 required
                 value={year}
                 onChange={(event) => setYear(Number(event.target.value))}
-              />
+              >
+                {Array.from({ length: new Date().getFullYear() - 2022 }, (_, index) => new Date().getFullYear() - index)
+                  .map((season) => <option key={season} value={season}>{season}</option>)}
+              </select>
             </label>
             <label htmlFor="kind">
               Session
@@ -183,28 +195,30 @@ export function SessionSelect() {
             </p>
           )}
           {sessions.length > 0 && (
-            <CardRail label="available sessions">
-              {sessions.map((session) => {
+            <div className="session-search-results" role="region" aria-label="available sessions">
+              <div className="archive-results-toolbar">
+                <p className="session-search-results__count" role="status">{filteredSessions.length} of {sessions.length} sessions</p>
+                <label className="archive-filter">
+                  Filter results
+                  <input type="search" placeholder="Search circuit or country" value={query} onChange={(event) => setQuery(event.target.value)} />
+                </label>
+              </div>
+              <div className="archive-columns" aria-hidden="true"><span>Grand Prix / circuit</span><span>Session</span><span>Status</span><span /></div>
+              {filteredSessions.map((session) => {
                 const saved = imported.some(
                   (item) => item.sessionKey === session.session_key,
                 );
                 return (
                   <article
-                    className="session-import-card"
+                    className="archive-row"
                     key={session.session_key}
                   >
                     <div>
-                      <p className="eyebrow">
-                        {session.year} · {session.session_name}
-                      </p>
                       <h3>{session.country_name}</h3>
                       <p className="muted">{session.circuit_short_name}</p>
                     </div>
-                    <span
-                      className={"session-badge" + (saved ? " is-saved" : "")}
-                    >
-                      {saved ? "Saved locally" : "Available to import"}
-                    </span>
+                    <span className="archive-row__session">{session.year} · {session.session_name}</span>
+                    <span className={"archive-row__status" + (saved ? " is-saved" : "")}>{saved ? "Saved" : "Not imported"}</span>
                     <button
                       className="button-secondary"
                       disabled={importing !== null}
@@ -219,7 +233,8 @@ export function SessionSelect() {
                   </article>
                 );
               })}
-            </CardRail>
+              {filteredSessions.length === 0 && <p className="empty-state">No matching circuit or country. Try another name.</p>}
+            </div>
           )}
           {!sessions.length && (
             <p className="empty-state">
@@ -227,10 +242,11 @@ export function SessionSelect() {
                 ? "Searching OpenF1…"
                 : searched
                   ? "No sessions found. Try a different season or session type."
-                  : "Choose a season and session type to get started."}
+                  : "Select a season and session type, then search."}
             </p>
           )}
         </section>
+        </div>
         <p className="page-footnote">
           Telemetry is loaded only for the laps you compare and cached for
           future visits.

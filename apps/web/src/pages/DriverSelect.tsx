@@ -81,7 +81,7 @@ export function DriverSelect() {
     lap.lapDuration > 0 &&
     !lap.isPitLap &&
     !lap.isPitOutLap;
-  const selectedLap = (driver: typeof leftDriver, side: string) => {
+  const selectedLap = (driver: typeof leftDriver, side: string, excludedId: number | null = null) => {
     if (!driver) return null;
     const stint =
       race &&
@@ -89,7 +89,7 @@ export function DriverSelect() {
         (item) => item.stintNumber === Number(searchParams.get(side + "Stint")),
       );
     const laps = driver.laps.filter(
-      (lap) => eligible(lap) && (!stint || lap.stint === stint.stintNumber),
+      (lap) => eligible(lap) && lap.id !== excludedId && (!stint || lap.stint === stint.stintNumber),
     );
     return (
       laps.find(
@@ -98,7 +98,7 @@ export function DriverSelect() {
     );
   };
   const leftLapId = selectedLap(leftDriver, "left");
-  const rightLapId = selectedLap(rightDriver, "right");
+  const rightLapId = selectedLap(rightDriver, "right", leftLapId);
   useEffect(() => {
     const step = Number(searchParams.get("step") ?? 10);
     const smoothing = Number(searchParams.get("smooth") ?? 3);
@@ -271,31 +271,6 @@ export function DriverSelect() {
         )}
         {overview && (
           <>
-            <ol className="flow-steps" aria-label="Analysis steps">
-              <li className={!pairReady ? "is-current" : "is-complete"}>
-                <span>01</span>Choose drivers
-              </li>
-              {race && (
-                <li
-                  className={
-                    comparison ? "is-complete" : pairReady ? "is-current" : ""
-                  }
-                >
-                  <span>02</span>Race pace
-                </li>
-              )}
-              <li
-                className={
-                  comparison
-                    ? "is-complete"
-                    : pairReady && !race
-                      ? "is-current"
-                      : ""
-                }
-              >
-                <span>{race ? "03" : "02"}</span>Compare laps
-              </li>
-            </ol>
             <section
               className="driver-selection-stage"
               aria-labelledby="driver-stage-title"
@@ -303,11 +278,11 @@ export function DriverSelect() {
               <div className="stage-heading">
                 <div>
                   <h2 id="driver-stage-title">
-                    {pairReady ? "Your driver pair" : "Choose two drivers"}
+                    {pairReady ? "Driver comparison" : "Choose your drivers"}
                   </h2>
                   <p className="muted">
                     {race
-                      ? "Start with the race, then look at individual laps."
+                      ? "Select a reference and a comparison driver. You can compare two laps from the same driver."
                       : "Select drivers, then choose their qualifying laps."}
                   </p>
                 </div>
@@ -319,7 +294,7 @@ export function DriverSelect() {
                     aria-controls="driver-lists"
                     onClick={() => setDriversExpanded((value) => !value)}
                   >
-                    {driversExpanded ? "Done choosing" : "Change drivers"}
+                    {driversExpanded ? "Confirm drivers" : "Change drivers"}
                   </button>
                 )}
               </div>
@@ -386,7 +361,6 @@ export function DriverSelect() {
               >
                 <div className="stage-heading">
                   <div>
-                    <p className="eyebrow">02 / WHOLE RACE</p>
                     <h2 id="race-pace-title">Race pace & stints</h2>
                   </div>
                   <a href="#lap-comparison" className="back-link">
@@ -407,13 +381,10 @@ export function DriverSelect() {
             >
               <div className="stage-heading">
                 <div>
-                  <p className="eyebrow">
-                    {race ? "03" : "02"} / INDIVIDUAL LAPS
-                  </p>
                   <h2 id="lap-stage-title">Choose laps to compare</h2>
                   <p className="muted">
-                    Fastest eligible laps are preselected. Change either lap to
-                    explore another part of the session.
+                    Fastest eligible laps are preselected. For the same driver,
+                    two different laps are selected automatically.
                   </p>
                 </div>
                 <div className="share-selection">
@@ -443,6 +414,7 @@ export function DriverSelect() {
                       : null;
                   const laps = driver.laps.filter(
                     (lap) =>
+                      (side !== "right" || lap.id !== leftLapId) &&
                       lap.lapDuration !== null &&
                       lap.lapDuration > 0 &&
                       !lap.isPitLap &&
@@ -527,7 +499,9 @@ export function DriverSelect() {
                         }}
                       >
                         <option value="" disabled>
-                          No eligible timed laps
+                          {side === "right" && leftDriverId === rightDriverId
+                            ? "No other eligible lap in this stint"
+                            : "No eligible timed laps"}
                         </option>
                         {laps.map((lap) => (
                           <option key={lap.id} value={lap.id}>
@@ -548,8 +522,9 @@ export function DriverSelect() {
                       </select>
                       {!laps.length && (
                         <p className="muted">
-                          No eligible laps in this selection. Try another stint
-                          or driver.
+                          {side === "right" && leftDriverId === rightDriverId
+                            ? "No different lap is available in this stint. Choose another stint or driver."
+                            : "No eligible laps in this selection. Try another stint or driver."}
                         </p>
                       )}
                     </div>
@@ -665,13 +640,13 @@ export function DriverSelect() {
 function ComparisonView({ comparison }: { comparison: ComparisonResponse }) {
   const [hover, setHover] = useState<number | null>(null);
   const [tab, setTab] = useState("telemetry");
-  const [showMap, setShowMap] = useState(false);
+  const [showMap, setShowMap] = useState(true);
   const [selectedSector, setSelectedSector] = useState<number | null>(null);
   const selectedMiniSector = comparison.miniSectors.find(
     (sector) => sector.number === selectedSector,
   );
-  const [showPedals, setShowPedals] = useState(false);
-  const [showGear, setShowGear] = useState(false);
+  const [showPedals, setShowPedals] = useState(true);
+  const [showGear, setShowGear] = useState(true);
   const reference = comparison.referenceLap,
     target = comparison.targetLap;
   const maxDistance = reference.points.at(-1)?.distanceM ?? 1;
@@ -812,6 +787,11 @@ function ComparisonView({ comparison }: { comparison: ComparisonResponse }) {
       </nav>
       {tab === "telemetry" && (
         <>
+          {showMap && (
+            <div className="comparison-map">
+              <TrackMap comparison={comparison} hoverDistance={hover} onHover={setHover} />
+            </div>
+          )}
           <MiniSectorPanel
             comparison={comparison}
             selected={selectedSector}
@@ -828,30 +808,20 @@ function ComparisonView({ comparison }: { comparison: ComparisonResponse }) {
             }}
           />
           <div className="chart-toolbar">
-            <label>
-              <input
-                type="checkbox"
-                checked={showGear}
-                onChange={(event) => setShowGear(event.target.checked)}
-              />
-              Gear
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={showPedals}
-                onChange={(e) => setShowPedals(e.target.checked)}
-              />
-              Pedal traces
-            </label>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={showMap}
-                onChange={(e) => setShowMap(e.target.checked)}
-              />
-              Track map
-            </label>
+            <div className="chart-visibility" role="group" aria-label="Visible charts">
+              <span className="chart-visibility__label">Show</span>
+              {[
+                { label: "Pedals", enabled: showPedals, toggle: () => setShowPedals(!showPedals) },
+                { label: "Gear", enabled: showGear, toggle: () => setShowGear(!showGear) },
+                { label: "Track map", enabled: showMap, toggle: () => setShowMap(!showMap) },
+              ].map(({ label, enabled, toggle }) => (
+                <button type="button" className="chart-toggle" key={label}
+                  aria-pressed={enabled} onClick={toggle}>
+                  <span className="chart-toggle__indicator" aria-hidden="true">{enabled ? "✓" : "+"}</span>
+                  {label}
+                </button>
+              ))}
+            </div>
             <label className="distance-control">
               {hover === null ? "Inspect distance" : Math.round(hover) + " m"}
               <input
@@ -865,13 +835,6 @@ function ComparisonView({ comparison }: { comparison: ComparisonResponse }) {
               />
             </label>
           </div>
-          {showMap && (
-            <TrackMap
-              comparison={comparison}
-              hoverDistance={hover}
-              onHover={setHover}
-            />
-          )}
           <div className="chart-grid">
             <ChartCard
               {...shared}

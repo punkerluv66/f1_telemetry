@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { DriverSessionSummary } from "../types";
 
 export function DriverPicker({
@@ -14,15 +15,25 @@ export function DriverPicker({
   race: boolean;
 }) {
   const selected = drivers.find((driver) => driver.id === selectedId);
+  const [query, setQuery] = useState("");
+  const matches = drivers.filter((driver) =>
+    `${driver.fullName} ${driver.teamName} ${driver.driverNumber} ${driver.acronym}`
+      .toLowerCase().includes(query.trim().toLowerCase()),
+  );
   return (
     <div className={"driver-roster driver-roster--" + side}>
       <div className="roster-heading">
         <span className="eyebrow">
-          {side === "left" ? "Driver 1 · Left" : "Driver 2 · Right"}
+          {side === "left" ? "Reference driver" : "Comparison driver"}
         </span>
         <strong>
-          {selected ? selected.acronym + " selected" : "Choose a driver"}
+          {selected ? selected.fullName : "Select a driver"}
         </strong>
+      </div>
+      <div className="roster-search">
+        <input type="search" aria-label={`Search ${side} drivers`}
+          placeholder="Search name, team or number" value={query}
+          onChange={(event) => setQuery(event.target.value)} />
       </div>
       <div
         className="roster-list"
@@ -32,7 +43,7 @@ export function DriverPicker({
         }
         tabIndex={0}
       >
-        {drivers.map((driver) => (
+        {matches.map((driver) => (
           <button
             type="button"
             key={driver.id}
@@ -64,10 +75,10 @@ export function DriverPicker({
             </span>
           </button>
         ))}
+        {!matches.length && <p className="roster-empty">No matching drivers.</p>}
       </div>
       <p className="roster-footnote">
-        {race ? "Official finishing order" : "Session classification"} · scroll
-        for all {drivers.length} drivers
+        {race ? "Race classification" : "Session classification"} · {matches.length} of {drivers.length} drivers
       </p>
     </div>
   );
